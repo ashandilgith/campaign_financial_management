@@ -1,0 +1,135 @@
+[
+  {
+    "case": "Supplier tax invoice (PDF)",
+    "status": "done",
+    "error": "",
+    "seconds": 6.2,
+    "model": "gpt-6-luna",
+    "fields": {
+      "document_type": true,
+      "vendor": true,
+      "document_number": true,
+      "document_date": true,
+      "currency": true,
+      "total_amount": true,
+      "tax_amount": true
+    },
+    "fields_correct": 7,
+    "fields_total": 7,
+    "expected_warning_raised": true,
+    "extracted": {
+      "document_type": "invoice",
+      "vendor_name": "Lanka Stage & Sound (Pvt) Ltd",
+      "document_number": "LSS/INV/4471",
+      "document_date": "2026-11-17",
+      "currency": "LKR",
+      "total_amount": 354000,
+      "tax_amount": 54000,
+      "line_items": [
+        {
+          "description": "Mall atrium rental - Day 1",
+          "quantity": 1,
+          "amount": 150000
+        },
+        {
+          "description": "Mall atrium rental - Day 2",
+          "quantity": 1,
+          "amount": 150000
+        }
+      ],
+      "legibility": "good",
+      "handwritten": false,
+      "notes": "VAT 18% is LKR 54,000; subtotal LKR 300,000 and grand total LKR 354,000 add up. Authorised signature line is blank."
+    },
+    "truth": {
+      "document_type": [
+        "invoice"
+      ],
+      "vendor_contains": "lanka stage",
+      "document_number": "LSS/INV/4471",
+      "document_date": "2026-11-17",
+      "currency": "LKR",
+      "total_amount": 354000.0,
+      "tax_amount": 54000.0
+    },
+    "checks": [
+      [
+        "warn",
+        "Bill total LKR 354,000.00 \u2260 amount paid LKR 320,000.00."
+      ],
+      [
+        "info",
+        "lss-invoice-4471.pdf: VAT 18% is LKR 54,000; subtotal LKR 300,000 and grand total LKR 354,000 add up. Authorised signature line is blank."
+      ]
+    ]
+  },
+  {
+    "case": "Thermal receipt photo (JPEG, rotated)",
+    "status": "done",
+    "error": "",
+    "seconds": 4.6,
+    "model": "gpt-6-luna",
+    "fields": {
+      "document_type": true,
+      "vendor": true,
+      "document_number": true,
+      "document_date": true,
+      "currency": true,
+      "total_amount": true
+    },
+    "fields_correct": 6,
+    "fields_total": 6,
+    "expected_warning_raised": null,
+    "extracted": {
+      "document_type": "receipt",
+      "vendor_name": "CEYPETCO FUEL STATION KIRIBATHGODA",
+      "document_number": "R-008812",
+      "document_date": "2026-11-21",
+      "currency": "LKR",
+      "total_amount": 18400,
+      "tax_amount": null,
+      "line_items": [
+        {
+          "description": "Diesel (L)",
+          "quantity": 40,
+          "amount": 11600
+        },
+        {
+          "description": "Engine oil 1L",
+          "quantity": 1,
+          "amount": 2800
+        },
+        {
+          "description": "Coolant",
+          "quantity": 1,
+          "amount": 4000
+        }
+      ],
+      "legibility": "good",
+      "handwritten": false,
+      "notes": "No tax breakdown shown. The line items add up to the stated total."
+    },
+    "truth": {
+      "document_type": [
+        "invoice",
+        "receipt"
+      ],
+      "vendor_contains": "ceypetco",
+      "document_number": "R-008812",
+      "document_date": "2026-11-21",
+      "currency": "LKR",
+      "total_amount": 18400,
+      "tax_amount": null
+    },
+    "checks": [
+      [
+        "warn",
+        "Receipts add up to LKR 18,400.00 (1 receipt not read), but the settlement claims LKR 63,400.00 spent."
+      ],
+      [
+        "info",
+        "fuel-receipt.jpg: No tax breakdown shown. The line items add up to the stated total."
+      ]
+    ]
+  }
+]

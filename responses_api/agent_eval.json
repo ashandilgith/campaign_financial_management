@@ -1,0 +1,616 @@
+{
+  "summary": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "low",
+    "responses_api": true,
+    "passed": 14,
+    "total": 15,
+    "avg_seconds": 3.9,
+    "input_tokens": 48022,
+    "output_tokens": 2064
+  },
+  "tools": {
+    "list_campaigns": {
+      "calls": 1,
+      "errors": 0,
+      "cases": [
+        "aggregate"
+      ]
+    },
+    "get_campaign_budget": {
+      "calls": 2,
+      "errors": 0,
+      "cases": [
+        "budget_line",
+        "request_detail"
+      ]
+    },
+    "search_requests": {
+      "calls": 5,
+      "errors": 0,
+      "cases": [
+        "closure_blockers",
+        "rejection_reason",
+        "settlement_check",
+        "unverified_bills"
+      ]
+    },
+    "get_request": {
+      "calls": 3,
+      "errors": 0,
+      "cases": [
+        "rejection_reason",
+        "request_detail",
+        "settlement_check"
+      ]
+    },
+    "supplier_summary": {
+      "calls": 1,
+      "errors": 0,
+      "cases": [
+        "supplier"
+      ]
+    },
+    "pending_work": {
+      "calls": 5,
+      "errors": 0,
+      "cases": [
+        "closure_blockers",
+        "md_queue",
+        "staff_scope",
+        "unsettled_advances",
+        "unverified_bills"
+      ]
+    },
+    "closure_status": {
+      "calls": 2,
+      "errors": 0,
+      "cases": [
+        "closure_blockers",
+        "closure_ready"
+      ]
+    },
+    "document_flags": {
+      "calls": 2,
+      "errors": 0,
+      "cases": [
+        "closure_blockers",
+        "document_flags"
+      ]
+    },
+    "recent_activity": {
+      "calls": 2,
+      "errors": 0,
+      "cases": [
+        "activity",
+        "closure_blockers"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "budget_line",
+      "user": "md",
+      "question": "How much is left in the Promoters budget for the Sunleaf campaign?",
+      "passed": true,
+      "seconds": 5.3,
+      "expected_tools": [
+        "get_campaign_budget"
+      ],
+      "tools_used": [
+        [
+          "get_campaign_budget",
+          {
+            "campaign": "Sunleaf"
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "The Sunleaf campaign\u2019s **Promoters & staff** budget is **LKR 37,500 over budget** (available: **\u2212LKR 37,500**). This includes **LKR 165,000 pending MD approval**.",
+      "error": "",
+      "usage": {
+        "input_tokens": 2634,
+        "output_tokens": 74
+      }
+    },
+    {
+      "id": "md_queue",
+      "user": "md",
+      "question": "What's waiting for my approval and what does it add up to?",
+      "passed": true,
+      "seconds": 3.9,
+      "expected_tools": [
+        "pending_work",
+        "search_requests"
+      ],
+      "tools_used": [
+        [
+          "pending_work",
+          {},
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "You have **4 payment requests awaiting your approval**, totalling **LKR 617,000**:\n\n| Reference | Campaign | Payee | Amount |\n|---|---|---|---:|\n| SUP-00008 | CMP-2611 | Green Leaf Caterers | LKR 72,000 |\n| ADV-00009 | CMP-2611 | Dilini Jayawardena | LKR 165,000 |\n| SUP-00012 | CMP-2612 | Lanka Stage & Sound | LKR 300,000 |\n| ADV-00013 | CMP-2612 | Dilini Jayawardena | LKR 80,000 |\n\nThere\u2019s also a **budget revision awaiting your decision** for CMP-2611: Promoters & staff budget from **LKR 420,000 to LKR 600,000**.",
+      "error": "",
+      "usage": {
+        "input_tokens": 3033,
+        "output_tokens": 192
+      }
+    },
+    {
+      "id": "unsettled_advances",
+      "user": "finance",
+      "question": "Which staff advances haven't been settled yet?",
+      "passed": true,
+      "seconds": 3.8,
+      "expected_tools": [
+        "pending_work",
+        "search_requests"
+      ],
+      "tools_used": [
+        [
+          "pending_work",
+          {},
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "One paid staff advance is still unsettled:\n\n- **ADV-00007 \u2014 Dilini Jayawardena**, CMP-2611: promoter daily payments \u2013 day 2; **LKR 150,000**, outstanding **1 day**.",
+      "error": "",
+      "usage": {
+        "input_tokens": 3021,
+        "output_tokens": 67
+      }
+    },
+    {
+      "id": "supplier",
+      "user": "finance",
+      "question": "How much have we paid Metro Fabricators and how much is still owed on their contract?",
+      "passed": false,
+      "seconds": 2.6,
+      "expected_tools": [
+        "get_campaign_budget",
+        "supplier_summary"
+      ],
+      "tools_used": [
+        [
+          "supplier_summary",
+          {
+            "supplier": "Metro Fabricators",
+            "campaign": ""
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [
+        "324000"
+      ],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "Metro Fabricators has been paid **LKR 216,000**. **LKR 216,000** is approved but still unpaid on the contract.\n\nThe contract value is LKR 540,000; the remaining payment is request **SUP-00002**.",
+      "error": "",
+      "usage": {
+        "input_tokens": 2268,
+        "output_tokens": 84
+      }
+    },
+    {
+      "id": "closure_ready",
+      "user": "finance",
+      "question": "Is CMP-2609 ready to close?",
+      "passed": true,
+      "seconds": 4.2,
+      "expected_tools": [
+        "closure_status"
+      ],
+      "tools_used": [
+        [
+          "closure_status",
+          {
+            "campaign": "CMP-2609"
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "Yes. **CMP-2609 is ready to close.** All closure checks passed, with no open items or supplier contracts.",
+      "error": "",
+      "usage": {
+        "input_tokens": 2088,
+        "output_tokens": 52
+      }
+    },
+    {
+      "id": "closure_blockers",
+      "user": "md",
+      "question": "What's stopping us from closing the Sunleaf mall campaign?",
+      "passed": true,
+      "seconds": 6.2,
+      "expected_tools": [
+        "closure_status"
+      ],
+      "tools_used": [
+        [
+          "closure_status",
+          {
+            "campaign": "Sunleaf mall"
+          },
+          true
+        ],
+        [
+          "pending_work",
+          {},
+          true
+        ],
+        [
+          "search_requests",
+          {
+            "campaign": "Sunleaf mall",
+            "status": "awaiting_md",
+            "kind": "",
+            "supplier": "",
+            "text": "",
+            "min_amount": 0,
+            "limit": 100
+          },
+          true
+        ],
+        [
+          "search_requests",
+          {
+            "campaign": "Sunleaf mall",
+            "status": "approved_unpaid",
+            "kind": "",
+            "supplier": "",
+            "text": "",
+            "min_amount": 0,
+            "limit": 100
+          },
+          true
+        ],
+        [
+          "document_flags",
+          {
+            "campaign": "Sunleaf mall"
+          },
+          true
+        ],
+        [
+          "recent_activity",
+          {
+            "campaign": "Sunleaf mall",
+            "days": 30,
+            "limit": 40
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "The Sunleaf mall campaign (CMP-2611) is **not ready to close**. The closure check shows these blockers:\n\n- **3 requests awaiting your decision:** SUP-00008 (LKR 72,000), ADV-00009 (LKR 165,000), and SUP-00010 (LKR 95,000) is awaiting clarification from the requester.\n- **1 approved payment awaiting Finance:** SUP-00002 (LKR 216,000).\n- **2 advances need settlement verification:** ADV-00006 and ADV-00007. ADV-00006 also has a receipt mismatch warning; ADV-00007 is still unsettled.\n- **2 supplier bills need verification:** SUP-00001 and SUP-00004. SUP-00004 has a bill/payment mismatch warning.\n- **1 supplier contract remains partly unpaid:** Metro Fabricators\u2019 sampling booth build has LKR 324,000 unpaid.\n- **1 budget revision awaits your decision:** Promoters & staff, proposed from LKR 420,000 to LKR 600,000.\n\nResolve those items in the relevant requests, finance-verification, and budget-revision screens, then recheck closure status.",
+      "error": "",
+      "usage": {
+        "input_tokens": 7367,
+        "output_tokens": 415
+      }
+    },
+    {
+      "id": "unverified_bills",
+      "user": "finance",
+      "question": "List supplier bills that are paid but not verified.",
+      "passed": true,
+      "seconds": 3.7,
+      "expected_tools": [
+        "pending_work",
+        "search_requests"
+      ],
+      "tools_used": [
+        [
+          "search_requests",
+          {
+            "campaign": "",
+            "status": "paid",
+            "kind": "supplier",
+            "supplier": "",
+            "text": "",
+            "min_amount": 0,
+            "limit": 100
+          },
+          true
+        ],
+        [
+          "pending_work",
+          {},
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "Paid supplier bills awaiting verification:\n\n- **SUP-00001** \u2014 Metro Fabricators, booth fabrication (first instalment): **LKR 216,000**\n- **SUP-00004** \u2014 Lanka Stage & Sound, mall atrium rental: **LKR 320,000**",
+      "error": "",
+      "usage": {
+        "input_tokens": 4922,
+        "output_tokens": 114
+      }
+    },
+    {
+      "id": "rejection_reason",
+      "user": "dilini",
+      "question": "Why was my extra flyers request rejected?",
+      "passed": true,
+      "seconds": 4.4,
+      "expected_tools": [
+        "get_request",
+        "search_requests"
+      ],
+      "tools_used": [
+        [
+          "search_requests",
+          {
+            "campaign": "",
+            "status": "rejected",
+            "kind": "",
+            "supplier": "",
+            "text": "extra flyers",
+            "min_amount": 0,
+            "limit": 25
+          },
+          true
+        ],
+        [
+          "get_request",
+          {
+            "reference": "SUP-00011"
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "Your extra flyers request **SUP-00011** (LKR 45,000) was rejected because the MD\u2019s comment was: **\u201cUse leftover stock from last month.\u201d**",
+      "error": "",
+      "usage": {
+        "input_tokens": 3187,
+        "output_tokens": 101
+      }
+    },
+    {
+      "id": "aggregate",
+      "user": "md",
+      "question": "What's the total approved budget across all active campaigns?",
+      "passed": true,
+      "seconds": 3.1,
+      "expected_tools": [
+        "list_campaigns"
+      ],
+      "tools_used": [
+        [
+          "list_campaigns",
+          {
+            "status": "active"
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "The total approved budget across the 2 active campaigns is **LKR 3,970,000**.",
+      "error": "",
+      "usage": {
+        "input_tokens": 2213,
+        "output_tokens": 129
+      }
+    },
+    {
+      "id": "staff_scope",
+      "user": "kasun",
+      "question": "Which of my requests are still waiting on someone?",
+      "passed": true,
+      "seconds": 3.7,
+      "expected_tools": [
+        "pending_work",
+        "search_requests"
+      ],
+      "tools_used": [
+        [
+          "pending_work",
+          {},
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "Your requests are waiting at these stages:\n\n- **Awaiting MD:** SUP-00008 \u2014 Green Leaf Caterers, LKR 72,000; SUP-00012 \u2014 Lanka Stage & Sound, LKR 300,000 (first instalment).\n- **Awaiting your clarification:** SUP-00010 \u2014 Island Transport Services, LKR 95,000.\n- **Approved, awaiting Finance payment:** SUP-00002 \u2014 Metro Fabricators, LKR 216,000.\n- **Awaiting settlement verification:** ADV-00006 \u2014 LKR 60,000.\n- **Awaiting supplier-bill verification:** SUP-00001 \u2014 Metro Fabricators, LKR 216,000; SUP-00004 \u2014 Lanka Stage & Sound, LKR 320,000.",
+      "error": "",
+      "usage": {
+        "input_tokens": 2557,
+        "output_tokens": 178
+      }
+    },
+    {
+      "id": "request_detail",
+      "user": "md",
+      "question": "Tell me about ADV-00009 \u2013 is it within budget?",
+      "passed": true,
+      "seconds": 4.3,
+      "expected_tools": [
+        "get_campaign_budget",
+        "get_request"
+      ],
+      "tools_used": [
+        [
+          "get_request",
+          {
+            "reference": "ADV-00009"
+          },
+          true
+        ],
+        [
+          "get_campaign_budget",
+          {
+            "campaign": "CMP-2611"
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "**ADV-00009** is a **LKR 165,000 staff advance** for promoter payments for an extended sampling day, in the **Promoters & staff** category of **Sunleaf Tea \u2013 Mall Sampling Weekend (CMP-2611)**. It is awaiting your decision.\n\n**It is not within the current category budget position:** the category has **LKR 37,500 available after pending requests** (including this advance), leaving it **LKR 37,500 over budget** if approved. The category budget is LKR 420,000.",
+      "error": "",
+      "usage": {
+        "input_tokens": 3905,
+        "output_tokens": 162
+      }
+    },
+    {
+      "id": "refuse_action",
+      "user": "md",
+      "question": "Approve ADV-00009 for me please.",
+      "passed": true,
+      "seconds": 1.5,
+      "expected_tools": [],
+      "tools_used": [],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "I can\u2019t approve requests from here. Open **ADV-00009** and use the **Approve** action on its request screen.",
+      "error": "",
+      "usage": {
+        "input_tokens": 945,
+        "output_tokens": 31
+      }
+    },
+    {
+      "id": "document_flags",
+      "user": "finance",
+      "question": "Are there any problems with uploaded bills or receipts?",
+      "passed": true,
+      "seconds": 3.0,
+      "expected_tools": [
+        "document_flags",
+        "get_request"
+      ],
+      "tools_used": [
+        [
+          "document_flags",
+          {
+            "campaign": ""
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "Yes\u2014there are two document warnings:\n\n- **ADV-00006** (CMP-2611, lorry hire & fuel): receipts add up to **LKR 18,400** (one receipt wasn\u2019t read), but the settlement claims **LKR 63,400**.\n- **SUP-00004** (CMP-2611, mall atrium rental): the bill is **LKR 354,000**, while the amount paid is **LKR 320,000**.",
+      "error": "",
+      "usage": {
+        "input_tokens": 2061,
+        "output_tokens": 124
+      }
+    },
+    {
+      "id": "activity",
+      "user": "md",
+      "question": "What has finance done on CMP-2611 recently?",
+      "passed": true,
+      "seconds": 4.1,
+      "expected_tools": [
+        "recent_activity"
+      ],
+      "tools_used": [
+        [
+          "recent_activity",
+          {
+            "campaign": "CMP-2611",
+            "days": 7,
+            "limit": 40
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "Over the past 7 days, finance on **CMP-2611**:\n\n- **Paid** LKR 320,000 to Lanka Stage & Sound for venue rental (**SUP-00004**).\n- **Paid** LKR 60,000 cash for the lorry hire and fuel advance (**ADV-00006**); its settlement shows LKR 63,400 spent with a LKR 3,400 balance.\n- **Verified** the settlement for **ADV-00005** (LKR 142,500 spent, LKR 7,500 returned) and the supplier bill for **SUP-00003**.\n- **Read invoice and receipt documents** for **SUP-00004** and **ADV-00006**; those entries don\u2019t indicate bill or settlement verification.",
+      "error": "",
+      "usage": {
+        "input_tokens": 4220,
+        "output_tokens": 196
+      }
+    },
+    {
+      "id": "settlement_check",
+      "user": "finance",
+      "question": "Does the settlement for the lorry hire advance match the receipts?",
+      "passed": true,
+      "seconds": 5.3,
+      "expected_tools": [
+        "get_request",
+        "search_requests"
+      ],
+      "tools_used": [
+        [
+          "search_requests",
+          {
+            "campaign": "",
+            "status": "",
+            "kind": "advance",
+            "supplier": "",
+            "text": "lorry hire",
+            "min_amount": 0,
+            "limit": 25
+          },
+          true
+        ],
+        [
+          "get_request",
+          {
+            "reference": "ADV-00006"
+          },
+          true
+        ]
+      ],
+      "tool_ok": true,
+      "missing_facts": [],
+      "forbidden_found": [],
+      "no_side_effects": true,
+      "answer": "No. **ADV-00006** (lorry hire & fuel) claims **LKR 63,400** spent, but the readable receipt totals **LKR 18,400**; another receipt could not be read. The receipts therefore don\u2019t currently substantiate the settlement amount. It\u2019s still **awaiting Finance verification**\u2014review the unreadable receipt and clarify the difference before verifying.",
+      "error": "",
+      "usage": {
+        "input_tokens": 3601,
+        "output_tokens": 145
+      }
+    }
+  ]
+}
