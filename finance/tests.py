@@ -375,3 +375,107 @@ class AIDisabledTests(Base):
         with mock.patch.object(ai, "call_model") as m:
             self.client.post(f"/requests/{r.pk}/upload/", {"kind": "quote", "file": ContentFile(b"q", name="q.txt")})
         m.assert_not_called()
+
+
+# --------------------------------------------------------------------------- query agent (offline)
+import json as _json
+
+from langchain_core.messages import AIMessage, ToolMessage
+
+from . import agent
+
+
+class ScriptedLLM:
+    """Stands in for the chat model: returns scripted AIMessages, may inspect tool results."""
+
+    def __init__(self, *steps):
+        self.steps, self.seen = list(steps), []
+
+    def bind_tools(self, tools):
+        self.tool_names = [t.name for t in tools]
+        return self
+
+    def invoke(self, messages):
+        self.seen.append(messages)
+        step = self.steps.pop(0)
+        return step(messages) if callable(step) else step
+
+
+def call(name, args, i="c1"):
+    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": i, "type": "tool_call"}])
+
+
+def last_tool(messages):
+    return _json.loads([m for m in messages if isinstance(m, ToolMessage)][-1].content)
+
+
+@override_settings(OPENAI_API_KEY="test-key")
+class AgentTests(Base):
+    def test_budget_question_uses_tool_figures(self):
+        self.req("30000")
+        llm = ScriptedLLM(call("get_campaign_budget", {"campaign": "T1"}),
+                          lambda m: AIMessage(content=f"Venue available: {last_tool(m)['categories'][0]['available']}"))
+        res = agent.ask(self.md, "How much is left for venue?", llm=llm)
+        self.assertEqual(res["answer"], "Venue available: 70000.0")
+        self.assertEqual([c["name"] for c in res["tool_calls"]], ["get_campaign_budget"])
+        self.assertTrue(res["tool_calls"][0]["ok"])
+        self.assertIn("Today is", llm.seen[0][0].content)  # system prompt sent
+
+    def test_bad_campaign_returns_error_then_recovers(self):
+        llm = ScriptedLLM(call("get_campaign_budget", {"campaign": "nope"}, "a"),
+                          call("list_campaigns", {}, "b"),
+                          AIMessage(content="Did you mean T1?"))
+        res = agent.ask(self.md, "budget for nope", llm=llm)
+        self.assertFalse(res["tool_calls"][0]["ok"])
+        self.assertTrue(res["tool_calls"][1]["ok"])
+        self.assertEqual(res["answer"], "Did you mean T1?")
+
+    def test_staff_scoping(self):
+        other = make_user("other", svc.ROLE_STAFF)
+        self.req("1000")
+        self.req("2000", user=other)
+        names = [t.name for t in agent.build_tools(self.staff)]
+        self.assertNotIn("recent_activity", names)
+        self.assertIn("recent_activity", [t.name for t in agent.build_tools(self.md)])
+        tools = {t.name: t for t in agent.build_tools(self.staff)}
+        out = _json.loads(tools["search_requests"].invoke({}))
+        self.assertEqual((out["count"], out["total_amount"]), (1, 1000.0))
+        theirs = PaymentRequest.objects.get(requested_by=other)
+        self.assertIn("error", _json.loads(tools["get_request"].invoke({"reference": theirs.reference})))
+
+    def test_every_tool_runs_on_demo_shaped_data(self):
+        r = self.req("40000", new_contract_total=D("90000"), instalment="first")
+        svc.decide_request(self.md, r, "approve")
+        self.pay(r)
+        adv = self.req("5000", kind="advance")
+        svc.decide_request(self.md, adv, "approve")
+        self.pay(adv)
+        tools = {t.name: t for t in agent.build_tools(self.md)}
+        calls = {"list_campaigns": {}, "get_campaign_budget": {"campaign": "Test"},
+                 "search_requests": {"status": "paid", "kind": "supplier"}, "get_request": {"reference": r.reference},
+                 "supplier_summary": {"supplier": "acme"}, "pending_work": {}, "closure_status": {"campaign": "T1"},
+                 "document_flags": {}, "recent_activity": {"days": 3}}
+        self.assertEqual(set(calls), set(tools))
+        for name, args in calls.items():
+            out = _json.loads(tools[name].invoke(args))
+            self.assertNotIn("error", out, name)
+        self.assertEqual(_json.loads(tools["pending_work"].invoke({}))["advances_not_settled"][0]["ref"], adv.reference)
+        self.assertEqual(_json.loads(tools["supplier_summary"].invoke({"supplier": "acme"}))["contracts"][0]["value"], 90000.0)
+
+    def test_model_failure_is_reported(self):
+        class Broken(ScriptedLLM):
+            def invoke(self, messages):
+                raise RuntimeError("429 rate limited")
+        res = agent.ask(self.md, "hi", llm=Broken())
+        self.assertIn("429", res["error"])
+
+    def test_ask_page(self):
+        self.client.force_login(self.md)
+        self.assertEqual(self.client.get("/ask/").status_code, 200)
+        fake = {"answer": "LKR 70,000 left", "error": "", "tool_calls": [{"name": "get_campaign_budget", "args": {}, "ok": True}]}
+        with mock.patch.object(agent, "ask", return_value=fake):
+            self.client.post("/ask/", {"question": "venue left?"})
+        page = self.client.get("/ask/").content.decode()
+        self.assertIn("LKR 70,000 left", page)
+        self.assertIn("get_campaign_budget", page)
+        self.assertTrue(AuditLog.objects.filter(action="agent.query").exists())

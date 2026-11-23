@@ -1,0 +1,35 @@
+{% extends "finance/base.html" %}
+{% block title %}Ask · Campaign Finance{% endblock %}
+{% block content %}
+<style>
+  .bubble{padding:.7rem .9rem;border-radius:12px;margin:.5rem 0;max-width:46rem;white-space:pre-wrap}
+  .bubble.user{background:var(--brand);color:#fff;margin-left:auto}
+  .bubble.assistant{background:#fff;border:1px solid var(--line)}
+  .trace{font-size:.78rem;color:var(--muted);margin-top:.4rem}
+  .trace code{background:#f0f2f6;padding:.05rem .3rem;border-radius:4px}
+  .chip{display:inline-block;border:1px solid var(--line);background:#fff;border-radius:999px;padding:.35rem .7rem;margin:.2rem;font-size:.85rem;cursor:pointer}
+</style>
+<div class="actions" style="justify-content:space-between"><h1>Ask about campaign finances</h1>
+  {% if history %}<form method="post">{% csrf_token %}<button class="btn sm ghost" name="clear" value="1">New conversation</button></form>{% endif %}</div>
+{% if not agent_enabled %}
+  <div class="alert warn">The assistant is off. Set <code>OPENAI_API_KEY</code> to enable it.</div>
+{% endif %}
+<p class="small muted">Answers come from live app data via read-only lookups{% if not can_manage %} — you'll only see your own requests{% endif %}. It can't approve or pay anything.</p>
+
+<div>
+{% for m in history %}
+  <div class="bubble {{ m.role }}">{% if m.error %}<span class="neg">Sorry, that failed: {{ m.error }}</span>{% else %}{{ m.text }}{% endif %}
+    {% if m.tools %}<div class="trace">Looked up: {% for t in m.tools %}<code title="{{ t.args }}">{{ t.name }}</code>{% if not t.ok %}<span class="neg">✗</span>{% endif %} {% endfor %}</div>{% endif %}
+  </div>
+{% empty %}
+  <div class="card"><h3>Try asking</h3>
+    {% for e in examples %}<span class="chip" onclick="document.getElementById('q').value=this.textContent;document.getElementById('q').focus()">{{ e }}</span>{% endfor %}
+  </div>
+{% endfor %}
+</div>
+
+<form method="post" class="card actions" style="position:sticky;bottom:.5rem" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Thinking…'">{% csrf_token %}
+  <input type="text" id="q" name="question" placeholder="e.g. What's still unpaid on CMP-2611?" style="flex:1" {% if not agent_enabled %}disabled{% endif %} autofocus required>
+  <button class="btn" {% if not agent_enabled %}disabled{% endif %}>Ask</button>
+</form>
+{% endblock %}

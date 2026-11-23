@@ -21,4 +21,5 @@ urlpatterns = [
     path("lines/<int:pk>/revise/", views.line_revise, name="line_revise"),
     path("revisions/<int:pk>/decide/", views.revision_decide, name="revision_decide"),
     path("audit/", views.audit_log, name="audit_log"),
+    path("ask/", views.ask_view, name="ask"),
 ]

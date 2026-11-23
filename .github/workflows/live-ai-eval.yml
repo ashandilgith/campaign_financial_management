@@ -1,0 +1,67 @@
+# Runs the AI features against the real OpenAI API using the OPENAI_API_KEY repo secret,
+# on realistic demo data. Results are pushed to the `eval-results` branch (eval_reports/*.md).
+name: Live AI eval
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "finance/ai.py"
+      - "finance/agent.py"
+      - "finance/services.py"
+      - "finance/management/commands/agent_eval.py"
+      - "finance/management/commands/ai_smoke.py"
+      - ".github/workflows/live-ai-eval.yml"
+permissions:
+  contents: write
+concurrency:
+  group: live-ai-eval
+  cancel-in-progress: true
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      AI_PROVIDER: openai
+      AI_MODEL: gpt-6-luna
+      AI_REASONING_EFFORT: low
+      AGENT_REASONING_EFFORT: low
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: sudo apt-get install -y fonts-dejavu-core >/dev/null
+      - name: Prepare demo data
+        run: |
+          python manage.py migrate --noinput
+          python manage.py seed_demo
+          mkdir -p eval_reports
+          echo "{\"sha\": \"${GITHUB_SHA}\", \"run\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\", \"date\": \"$(date -u +%FT%TZ)\", \"key_present\": $([ -n "$OPENAI_API_KEY" ] && echo true || echo false)}" > eval_reports/meta.json
+      - name: Document reading smoke test (receipt photo + invoice PDF)
+        continue-on-error: true
+        run: python manage.py ai_smoke --out eval_reports 2>&1 | tee eval_reports/ai_smoke.log
+      - name: Agent eval – Responses API
+        continue-on-error: true
+        env:
+          AGENT_USE_RESPONSES_API: "1"
+        run: python manage.py agent_eval --out eval_reports/responses_api 2>&1 | tee eval_reports/agent_responses.log
+      - name: Agent eval – Chat Completions API
+        continue-on-error: true
+        env:
+          AGENT_USE_RESPONSES_API: "0"
+        run: python manage.py agent_eval --out eval_reports/chat_completions 2>&1 | tee eval_reports/agent_chat.log
+      - name: Publish reports to eval-results branch
+        if: always()
+        run: |
+          cp -r eval_reports /tmp/out
+          cd /tmp/out
+          git init -q -b eval-results
+          git config user.name "eval-bot"
+          git config user.email "eval-bot@users.noreply.github.com"
+          git add -A
+          git commit -qm "Live AI eval for ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" eval-results

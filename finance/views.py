@@ -440,3 +440,39 @@ def attachment_download(request, pk):
     att = get_object_or_404(Attachment, pk=pk)
     _get_request_for(request.user, att.request_id)  # permission check
     return FileResponse(att.file.open("rb"), as_attachment=False, filename=att.filename)
+
+
+# --------------------------------------------------------------------------- AI assistant
+
+
+ASK_EXAMPLES = [
+    "How much is left in the Promoters budget for CMP-2611?",
+    "What is waiting for my approval and how much is it in total?",
+    "Which advances are still not settled, and for how long?",
+    "How much have we paid Metro Fabricators, and what is still owed on their contract?",
+    "Is CMP-2609 ready to close? If not, what's blocking it?",
+    "Any AI document warnings I should look at?",
+]
+
+
+@login_required
+def ask_view(request):
+    from . import agent
+
+    history = request.session.get("ask_history", [])
+    if request.method == "POST":
+        if request.POST.get("clear"):
+            request.session["ask_history"] = []
+            return redirect("ask")
+        q = request.POST.get("question", "").strip()[:1000]
+        if q and agent.enabled():
+            res = agent.ask(request.user, q, [(h["role"], h["text"]) for h in history])
+            history.append({"role": "user", "text": q})
+            history.append({"role": "assistant", "text": res["answer"] or "", "error": res.get("error", ""),
+                            "tools": [{"name": c["name"], "args": c["args"], "ok": c["ok"]} for c in res["tool_calls"]]})
+            request.session["ask_history"] = history[-20:]
+            svc.log(request.user, "agent.query",
+                    f"Asked: {q[:200]} · tools: {', '.join(c['name'] for c in res['tool_calls']) or 'none'}")
+        return redirect("ask")
+    return render(request, "finance/ask.html", {"history": history, "examples": ASK_EXAMPLES,
+                                                "agent_enabled": agent.enabled()})

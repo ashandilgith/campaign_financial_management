@@ -85,6 +85,7 @@
     {% if is_finance %}<a href="{% url 'finance_queue' %}" class="{% if u == 'finance_queue' %}on{% endif %}">Finance{% if finance_queue_count %}<span class="count">{{ finance_queue_count }}</span>{% endif %}</a>{% endif %}
     <a href="{% url 'campaign_list' %}" class="{% if 'campaign' in u %}on{% endif %}">Campaigns</a>
     <a href="{% url 'request_list' %}" class="{% if u == 'request_list' %}on{% endif %}">Requests</a>
+    <a href="{% url 'ask' %}" class="{% if u == 'ask' %}on{% endif %}">Ask AI</a>
     {% if can_manage %}<a href="{% url 'audit_log' %}" class="{% if u == 'audit_log' %}on{% endif %}">Audit</a>{% endif %}
     {% endwith %}
     <form method="post" action="{% url 'logout' %}" style="display:inline">{% csrf_token %}<button class="btn sm ghost" style="background:transparent;color:#dfe8f3;border-color:rgba(255,255,255,.35)">Sign out {{ user.username }}</button></form>

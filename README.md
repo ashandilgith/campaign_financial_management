@@ -23,6 +23,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system design review,
   - dates outside the campaign, and illegible or handwritten documents
 
   Settlements are pre-filled from the receipts. These checks are advisory only: the AI never approves, pays or changes figures.
+- **Ask AI (query agent):** a LangGraph agent on GPT-6 Luna answers plain-English questions such as "How much is left for promoters on CMP-2611?" or "Which advances are still open?". It uses 9 read-only, role-scoped tools built on the same budget code as the screens. Field staff only see their own requests, and the agent can't approve or pay anything.
 - **Roles:** Field Staff (sees own requests only), MD, Finance, Admin.
 
 ## Quick start
@@ -67,7 +68,21 @@ finance/tests.py        budget math, controls, HTTP smoke tests
 docs/ARCHITECTURE.md    design options and roadmap
 ```
 
-## Deploying
+## Deploy to Render (one click)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ashandilgith/campaign_financial_management)
+
+The `render.yaml` blueprint creates a web service, a Postgres database and a 1 GB disk for receipts, all in the Singapore region. Render will ask for:
+- `OPENAI_API_KEY`: needed for AI receipt reading and Ask AI. GitHub secrets are **not** passed to Render, so set it here as well.
+- `DJANGO_SUPERUSER_USERNAME` / `DJANGO_SUPERUSER_PASSWORD`: your admin login.
+
+`SEED_DEMO=1` loads the demo campaigns and users (password `demo1234`) so a client can try the app straight away. **Before using real data:** set `SEED_DEMO=0`, delete the demo users in `/admin/`, and create real users.
+
+## Live AI evaluation
+
+The `Live AI eval` GitHub workflow runs on your `OPENAI_API_KEY` secret. It reads a generated receipt photo and invoice PDF, and asks the agent 15 realistic questions as different users. The scored reports go to the `eval-results` branch.
+
+## Deploying elsewhere
 
 Set `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` and `DATABASE_URL` (PostgreSQL). Then:
 

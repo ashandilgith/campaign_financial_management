@@ -24,10 +24,14 @@ _load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-insecure-key-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = [h for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h]
+ALLOWED_HOSTS = [h for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*" if DEBUG else "").split(",") if h]
 CSRF_TRUSTED_ORIGINS = [
     o for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o
 ]
+# Render sets this automatically for web services.
+if os.environ.get("RENDER_EXTERNAL_HOSTNAME"):
+    ALLOWED_HOSTS.append(os.environ["RENDER_EXTERNAL_HOSTNAME"])
+    CSRF_TRUSTED_ORIGINS.append(f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -42,6 +46,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -83,6 +88,7 @@ def _database_from_url(url: str) -> dict:
         "PASSWORD": unquote(p.password or ""),
         "HOST": p.hostname or "",
         "PORT": str(p.port or ""),
+        "CONN_MAX_AGE": 60,
     }
 
 
@@ -108,6 +114,11 @@ USE_THOUSAND_SEPARATOR = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+                    if not DEBUG else "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 
@@ -131,9 +142,16 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 AI_PROVIDER = os.environ.get("AI_PROVIDER") or ("anthropic" if ANTHROPIC_API_KEY and not OPENAI_API_KEY else "openai")
 AI_MODEL = os.environ.get("AI_MODEL", "")  # blank = provider default (gpt-6-luna / claude-haiku-5-5)
 AI_REASONING_EFFORT = os.environ.get("AI_REASONING_EFFORT", "low")  # OpenAI only: none/low/medium/high
+# Query agent ("Ask" page) – LangGraph + OpenAI tool calling.
+AGENT_MODEL = os.environ.get("AGENT_MODEL", "")  # blank = AI_MODEL or gpt-6-luna
+AGENT_REASONING_EFFORT = os.environ.get("AGENT_REASONING_EFFORT", "low")
+AGENT_USE_RESPONSES_API = os.environ.get("AGENT_USE_RESPONSES_API", "1") == "1"
 AI_AUTO_READ = os.environ.get("AI_AUTO_READ", "1") == "1"  # read bills/receipts/quotes on upload
 
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True
+    SECURE_REDIRECT_EXEMPT = [r"^healthz$"]  # platform health checks may use plain HTTP
+    SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "3600"))
