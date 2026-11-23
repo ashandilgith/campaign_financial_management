@@ -1,0 +1,13 @@
+{% extends "finance/base.html" %}{% load money %}
+{% block title %}Finance · Campaign Finance{% endblock %}
+{% block content %}
+<h1>Finance work queue</h1>
+<h2>Approved — to pay ({{ to_pay|length }})</h2>
+{% include "finance/_request_cards.html" with reqs=to_pay empty="Nothing approved and unpaid." %}
+<h2>Advance settlements to verify ({{ settlements|length }})</h2>
+{% include "finance/_request_cards.html" with reqs=settlements empty="No settlements waiting." %}
+<h2>Supplier bills to verify ({{ bills|length }})</h2>
+{% include "finance/_request_cards.html" with reqs=bills empty="All paid supplier bills verified." %}
+<h2>Advances outstanding ({{ advances|length }})</h2>
+{% include "finance/_request_cards.html" with reqs=advances empty="No open advances." %}
+{% endblock %}

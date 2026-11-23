@@ -1,0 +1,11 @@
+{% load money %}
+{% for r in reqs %}
+<a class="req-card" href="{% url 'request_detail' r.pk %}">
+  <div class="top"><span><strong>{{ r.reference }}</strong> · {{ r.purpose }}</span><span class="amt">{{ r.amount|lkr }}</span></div>
+  <div class="small muted">{{ r.campaign.code }} · {{ r.budget_line.category }} · {{ r.payee }}{% if r.instalment != 'single' %} · {{ r.get_instalment_display }}{% endif %}</div>
+  <div class="small" style="margin-top:.3rem"><span class="badge b-{{ r.status }}">{{ r.get_status_display }}</span>
+    {% if r.kind == 'supplier' and r.status == 'paid' and not r.bill_verified %}<span class="badge b-pending">Bill not verified</span>{% endif %}
+    <span class="muted">{{ r.created_at|date:"j M" }} by {{ r.requested_by.username }}</span></div>
+</a>
+{% empty %}<p class="muted">{{ empty|default:"Nothing here." }}</p>
+{% endfor %}

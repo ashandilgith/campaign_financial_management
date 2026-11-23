@@ -1,0 +1,61 @@
+{% extends "finance/base.html" %}{% load money %}
+{% block title %}New request · {{ campaign.code }}{% endblock %}
+{% block content %}
+<h1>New request · {{ campaign.code }} {{ campaign.name }}</h1>
+<div class="two">
+<form method="post" enctype="multipart/form-data" class="card" id="reqform">{% csrf_token %}
+  {{ form.non_field_errors }}
+  <p><label>{{ form.kind.label }}</label>{{ form.kind }}</p>
+  <p>{{ form.budget_line.label_tag }}{{ form.budget_line }}{{ form.budget_line.errors }}
+     <span class="helptext" id="avail"></span></p>
+  <p>{{ form.purpose.label_tag }}{{ form.purpose }}{{ form.purpose.errors }}</p>
+  <p>{{ form.amount.label_tag }}<input type="number" step="0.01" inputmode="decimal" name="amount" id="id_amount" value="{{ form.amount.value|default_if_none:'' }}" required>{{ form.amount.errors }}</p>
+
+  <div id="supplier-fields">
+    <p>{{ form.contract.label_tag }}{{ form.contract }}<span class="helptext">Choose this for a second / final instalment of a job already started.</span></p>
+    <div class="grid">
+      <p>{{ form.supplier.label_tag }}{{ form.supplier }}{{ form.supplier.errors }}</p>
+      <p>{{ form.new_supplier.label_tag }}{{ form.new_supplier }}</p>
+    </div>
+    <div class="grid">
+      <p>{{ form.instalment.label_tag }}{{ form.instalment }}</p>
+      <p>{{ form.new_contract_total.label_tag }}{{ form.new_contract_total }}{{ form.new_contract_total.errors }}<span class="helptext">{{ form.new_contract_total.help_text }}</span></p>
+    </div>
+  </div>
+
+  <p>{{ form.needed_by.label_tag }}{{ form.needed_by }}</p>
+  <p>{{ form.details.label_tag }}{{ form.details }}</p>
+  <p>{{ form.quote.label_tag }}<input type="file" name="quote" accept="image/*,application/pdf" capture="environment"></p>
+  <button class="btn" style="width:100%;padding:.85rem">Send to MD for approval</button>
+</form>
+
+<div class="card">
+  <h3>Budget position (LKR)</h3>
+  <table class="small"><thead><tr><th>Category</th><th class="r">Budget</th><th class="r">Available</th></tr></thead>
+  <tbody>{% for line, f in rows %}
+    <tr data-line="{{ line.pk }}" data-avail="{{ f.available }}"><td>{{ line.category }}</td><td class="r">{{ f.budget|num }}</td>
+      <td class="r {% if f.available|neg %}neg{% endif %}"><strong>{{ f.available|num }}</strong></td></tr>
+  {% endfor %}</tbody></table>
+  <p class="small muted">Available already accounts for everything paid, approved and awaiting the MD.</p>
+</div>
+</div>
+<script>
+(function(){
+  const kind=document.querySelectorAll('input[name=kind]'), sup=document.getElementById('supplier-fields');
+  const line=document.getElementById('id_budget_line'), amt=document.getElementById('id_amount'), out=document.getElementById('avail');
+  const contract=document.getElementById('id_contract');
+  function k(){const v=[...kind].find(i=>i.checked);sup.style.display=(v&&v.value==='supplier')?'':'none'}
+  function a(){
+    document.querySelectorAll('tr[data-line]').forEach(r=>r.style.background='');
+    const row=document.querySelector('tr[data-line="'+line.value+'"]'); if(!row){out.textContent='';return}
+    row.style.background='#eef5ff';
+    if(contract && contract.value && [...kind].find(i=>i.checked)?.value==='supplier'){out.textContent='Instalment of an existing contract — already counted in the committed figure.';return}
+    const av=parseFloat(row.dataset.avail), x=parseFloat(amt.value||0), fmt=n=>'LKR '+n.toLocaleString('en-US',{maximumFractionDigits:2});
+    out.innerHTML='Available in this category: <strong>'+fmt(av)+'</strong>'+(x?(' · after this request: <strong style="color:'+((av-x)<0?'#b3261e':'#1d7a46')+'">'+fmt(av-x)+'</strong>'):'')+(x&&av-x<0?' — over budget, the MD will see a warning.':'');
+  }
+  kind.forEach(i=>i.addEventListener('change',k)); line.addEventListener('change',a); amt.addEventListener('input',a);
+  if(contract) contract.addEventListener('change',()=>{ if(contract.value){document.getElementById('id_instalment').value='second'} a(); });
+  k(); a();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "finance/base.html" %}{% load money %}
+{% block title %}{{ campaign.code }} · Campaign Finance{% endblock %}
+{% block content %}
+<div class="actions" style="justify-content:space-between">
+  <h1>{{ campaign.code }} · {{ campaign.name }} <span class="badge b-{{ campaign.status }}">{{ campaign.get_status_display }}</span></h1>
+  <div class="actions">
+    {% if campaign.accepts_requests %}<a class="btn" href="{% url 'request_new' campaign.pk %}">+ Request</a>{% endif %}
+    <a class="btn ghost" href="{% url 'campaign_report' campaign.pk %}">Report</a>
+    <a class="btn ghost" href="{% url 'campaign_export' campaign.pk %}">CSV</a>
+  </div>
+</div>
+<p class="muted small">{{ campaign.client }}{% if campaign.start_date %} · {{ campaign.start_date|date:"j M" }} – {{ campaign.end_date|date:"j M Y" }}{% endif %}</p>
+
+<div class="grid" style="margin-bottom:1rem">
+  <div class="stat big"><div class="k">Budget</div><div class="v">{{ total.budget|num }}</div></div>
+  <div class="stat big"><div class="k">Paid / advanced</div><div class="v">{{ total.cash_out|num }}</div></div>
+  <div class="stat big"><div class="k">Committed + pending</div><div class="v">{{ total.committed|add:total.pending|num }}</div></div>
+  <div class="stat big"><div class="k">Available</div><div class="v {% if total.available|neg %}neg{% endif %}">{{ total.available|num }}</div></div>
+  <div class="stat big"><div class="k">Verified spend</div><div class="v">{{ total.verified|num }}</div></div>
+  <div class="stat big"><div class="k">Advances outstanding</div><div class="v">{{ total.advances_outstanding|num }}</div></div>
+</div>
+
+<div class="card">
+  <h3>Budget vs position (LKR)</h3>
+  {% include "finance/_budget_table.html" with revise=campaign.accepts_requests %}
+  {% if campaign.accepts_requests %}
+  <details><summary>Add a budget category</summary>
+    <form method="post" action="{% url 'campaign_add_line' campaign.pk %}" class="actions" style="margin-top:.5rem">{% csrf_token %}
+      <input type="text" name="category" placeholder="Category" required style="flex:2 1 180px">
+      <input type="number" step="0.01" name="amount" placeholder="Amount" required style="flex:1 1 120px">
+      <button class="btn sm">Add</button>
+    </form>
+    {% if campaign.status != 'draft' and not is_md %}<p class="small muted">The campaign is live, so the amount is sent to the MD as a revision.</p>{% endif %}
+  </details>
+  {% endif %}
+</div>
+
+{% if contracts %}
+<div class="card scroll">
+  <h3>Supplier instalment contracts</h3>
+  <table><thead><tr><th>Supplier</th><th>Job</th><th class="hide-sm">Category</th><th class="r">Contract</th><th class="r">Requested</th><th class="r">Paid</th><th class="r">Balance</th></tr></thead>
+  <tbody>{% for c, p in contracts %}
+    <tr><td>{{ c.supplier }}</td><td>{{ c.description }}{% if c.cancelled %} <span class="badge b-cancelled">Cancelled</span>{% endif %}</td>
+      <td class="hide-sm">{{ c.budget_line.category }}</td><td class="r">{{ p.total|num }}</td><td class="r">{{ p.requested|num }}</td>
+      <td class="r">{{ p.paid|num }}</td><td class="r"><strong>{{ p.unpaid|num }}</strong></td></tr>
+  {% endfor %}</tbody></table>
+</div>
+{% endif %}
+
+<div class="two">
+  <div>
+    <h2>Requests</h2>
+    {% include "finance/_request_cards.html" with reqs=requests empty="No requests yet." %}
+  </div>
+  <div>
+    <div class="card">
+      <h3>Financial closure checklist</h3>
+      {% for label, ok, n in checks %}
+        <div class="check {% if ok %}ok{% else %}no{% endif %}"><span class="i">{% if ok %}✓{% else %}✗{% endif %}</span><span>{{ label }}{% if not ok %} <span class="muted">({{ n }} open)</span>{% endif %}</span></div>
+      {% endfor %}
+      <form method="post" action="{% url 'campaign_status' campaign.pk %}" class="actions" style="margin-top:.7rem">{% csrf_token %}
+        <select name="status" style="flex:1">{% for v, l in statuses %}<option value="{{ v }}" {% if v == campaign.status %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+        <button class="btn sm">Set status</button>
+      </form>
+      {% if not ready_to_close %}<p class="small muted">Closing is blocked until every check passes.</p>{% endif %}
+    </div>
+    {% if revisions %}
+    <div class="card">
+      <h3>Budget revisions</h3>
+      {% for r in revisions %}
+        <div class="small" style="padding:.35rem 0;border-bottom:1px solid var(--line)">
+          <span class="badge b-{{ r.status }}">{{ r.get_status_display }}</span>
+          <strong>{{ r.budget_line.category }}</strong> {{ r.old_amount|num }} → {{ r.new_amount|num }}
+          <div class="muted">{{ r.reason }} · {{ r.proposed_by.username }}{% if r.decided_by %} / {{ r.decided_by.username }}{% endif %} · {{ r.created_at|date:"j M" }}</div>
+          {% if r.status == 'pending' and is_md %}
+          <form method="post" action="{% url 'revision_decide' r.pk %}" class="actions">{% csrf_token %}<input type="hidden" name="next" value="{{ campaign.get_absolute_url }}">
+            <button class="btn ok sm" name="decision" value="approve">Approve</button><button class="btn bad sm" name="decision" value="reject">Reject</button></form>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <p class="small"><a href="{% url 'audit_log' %}?campaign={{ campaign.pk }}">Audit trail for this campaign →</a></p>
+  </div>
+</div>
+{% endblock %}

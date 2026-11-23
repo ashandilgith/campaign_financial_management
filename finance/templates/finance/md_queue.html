@@ -1,0 +1,54 @@
+{% extends "finance/base.html" %}{% load money %}
+{% block title %}Approvals · Campaign Finance{% endblock %}
+{% block content %}
+<h1>Waiting for your approval</h1>
+{% for req, c in items %}
+<div class="card">
+  <div class="req-card" style="border:none;padding:0;margin:0">
+    <div class="top"><a href="{% url 'request_detail' req.pk %}"><strong>{{ req.reference }}</strong> · {{ req.purpose }}</a><span class="amt">{{ req.amount|lkr }}</span></div>
+    <div class="small muted">{{ req.campaign.code }} · {{ req.budget_line.category }} · {{ req.get_kind_display }} → {{ req.payee }}{% if req.instalment != 'single' %} · {{ req.get_instalment_display }}{% endif %} · by {{ req.requested_by.username }}{% if req.needed_by %} · needed {{ req.needed_by|date:"j M" }}{% endif %}</div>
+  </div>
+  <div class="grid" style="margin:.7rem 0">
+    <div class="stat"><div class="k">Category budget</div><div class="v">{{ c.figures.budget|num }}</div></div>
+    <div class="stat"><div class="k">Already paid</div><div class="v">{{ c.figures.cash_out|num }}</div></div>
+    <div class="stat"><div class="k">Available before</div><div class="v {% if c.available_before|neg %}neg{% endif %}">{{ c.available_before|num }}</div></div>
+    <div class="stat"><div class="k">Available after</div><div class="v {% if c.available_after|neg %}neg{% endif %}">{{ c.available_after|num }}</div></div>
+  </div>
+  {% if c.contract %}<p class="small">Contract total {{ c.contract.total|lkr }} · paid so far {{ c.contract.paid|lkr }} · {{ c.contract.instalments|length }} instalment request{{ c.contract.instalments|length|pluralize }}</p>{% endif %}
+  {% if c.over_budget %}<div class="alert">Approving leaves this category at {{ c.available_after|lkr }} (over budget) — a comment is required.</div>{% endif %}
+  <form method="post" action="{% url 'request_action' req.pk 'approve' %}">{% csrf_token %}
+    <input type="hidden" name="next" value="{% url 'md_queue' %}">
+    <p><textarea name="comment" rows="1" placeholder="Comment (required to reject / clarify)"></textarea></p>
+    <div class="actions stretch">
+      <button class="btn ok" formaction="{% url 'request_action' req.pk 'approve' %}">Approve</button>
+      <button class="btn warn" formaction="{% url 'request_action' req.pk 'clarify' %}">Clarify</button>
+      <button class="btn bad" formaction="{% url 'request_action' req.pk 'reject' %}">Reject</button>
+    </div>
+  </form>
+  <p class="small" style="margin:.5rem 0 0"><a href="{% url 'request_detail' req.pk %}">Full details, prior payments &amp; documents →</a></p>
+</div>
+{% empty %}
+<div class="card muted">No payment requests waiting. 🎉</div>
+{% endfor %}
+
+{% if revisions %}
+<h2>Budget revisions</h2>
+{% for rev in revisions %}
+<div class="card">
+  <strong>{{ rev.budget_line.campaign.code }} · {{ rev.budget_line.category }}</strong>:
+  {{ rev.old_amount|lkr }} → <strong>{{ rev.new_amount|lkr }}</strong>
+  <span class="{% if rev.delta|neg %}{% else %}neg{% endif %}">({% if not rev.delta|neg %}+{% endif %}{{ rev.delta|num }})</span>
+  <div class="small muted">{{ rev.reason }} — {{ rev.proposed_by.username }}, {{ rev.created_at|date:"j M H:i" }}</div>
+  <form method="post" action="{% url 'revision_decide' rev.pk %}" class="actions" style="margin-top:.5rem">{% csrf_token %}
+    <button class="btn ok sm" name="decision" value="approve">Approve</button>
+    <button class="btn bad sm" name="decision" value="reject">Reject</button>
+  </form>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if clarifying %}
+<h2>Waiting on the requester</h2>
+{% include "finance/_request_cards.html" with reqs=clarifying %}
+{% endif %}
+{% endblock %}

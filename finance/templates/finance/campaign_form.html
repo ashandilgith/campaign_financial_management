@@ -1,0 +1,21 @@
+{% extends "finance/base.html" %}
+{% block title %}New campaign · Campaign Finance{% endblock %}
+{% block content %}
+<h1>New campaign</h1>
+<form method="post" class="card" style="max-width:720px">{% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="grid">
+    <p>{{ form.code.label_tag }}{{ form.code }}{{ form.code.errors }}</p>
+    <p>{{ form.status.label_tag }}{{ form.status }}<span class="helptext">Draft = budget still being prepared; edits don't need MD approval.</span></p>
+  </div>
+  <p>{{ form.name.label_tag }}{{ form.name }}{{ form.name.errors }}</p>
+  <p>{{ form.client.label_tag }}{{ form.client }}</p>
+  <div class="grid">
+    <p>{{ form.start_date.label_tag }}{{ form.start_date }}</p>
+    <p>{{ form.end_date.label_tag }}{{ form.end_date }}</p>
+  </div>
+  <p><label for="id_budget_lines">Approved budget by category</label>{{ form.budget_lines }}<span class="helptext">{{ form.budget_lines.help_text }}</span>{{ form.budget_lines.errors }}</p>
+  <p>{{ form.notes.label_tag }}{{ form.notes }}</p>
+  <button class="btn">Create campaign</button>
+</form>
+{% endblock %}

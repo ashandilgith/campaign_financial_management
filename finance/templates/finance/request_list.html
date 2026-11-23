@@ -1,0 +1,14 @@
+{% extends "finance/base.html" %}
+{% block title %}Requests · Campaign Finance{% endblock %}
+{% block content %}
+<h1>Payment requests</h1>
+<form method="get" class="card actions">
+  <select name="campaign" style="flex:1 1 160px"><option value="">All campaigns</option>
+    {% for c in campaigns %}<option value="{{ c.pk }}" {% if f_campaign == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.code }}</option>{% endfor %}</select>
+  <select name="status" style="flex:1 1 160px"><option value="">Any status</option>
+    {% for v, l in statuses %}<option value="{{ v }}" {% if f_status == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+  <input type="text" name="q" value="{{ q }}" placeholder="Search purpose / supplier" style="flex:2 1 200px">
+  <button class="btn">Filter</button>
+</form>
+{% include "finance/_request_cards.html" with reqs=requests empty="No matching requests." %}
+{% endblock %}

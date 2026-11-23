@@ -1,0 +1,45 @@
+{% extends "finance/base.html" %}{% load money %}
+{% block title %}{{ campaign.code }} report · Campaign Finance{% endblock %}
+{% block content %}
+<div class="actions no-print" style="justify-content:flex-end"><button class="btn ghost" onclick="window.print()">Print / save PDF</button>
+  <a class="btn ghost" href="{% url 'campaign_export' campaign.pk %}">Download CSV</a></div>
+<h1>Campaign financial report — {{ campaign.code }} · {{ campaign.name }}</h1>
+<p class="muted small">{{ campaign.client }} · Status: {{ campaign.get_status_display }}{% if campaign.closed_at %} (closed {{ campaign.closed_at|date:"j M Y" }}){% endif %} · Generated {% now "j M Y H:i" %}</p>
+
+<div class="card">
+  <h3>Budget versus actual (LKR)</h3>
+  <div class="scroll"><table>
+    <thead><tr><th>Category</th><th class="r">Budget</th><th class="r">Cash paid (net)</th><th class="r">Verified spend</th><th class="r">Variance vs budget</th><th class="r">Still committed</th></tr></thead>
+    <tbody>{% for line, f in rows %}
+      <tr><td>{{ line.category }}</td><td class="r">{{ f.budget|num }}</td><td class="r">{{ f.cash_out|num }}</td>
+        <td class="r">{{ f.verified|num }}</td><td class="r {% if f.variance|neg %}neg{% endif %}">{{ f.variance|num }}</td>
+        <td class="r">{{ f.committed|add:f.pending|num }}</td></tr>
+    {% endfor %}</tbody>
+    <tfoot><tr><td>Total</td><td class="r">{{ total.budget|num }}</td><td class="r">{{ total.cash_out|num }}</td>
+      <td class="r">{{ total.verified|num }}</td><td class="r {% if total.variance|neg %}neg{% endif %}">{{ total.variance|num }}</td>
+      <td class="r">{{ total.committed|add:total.pending|num }}</td></tr></tfoot>
+  </table></div>
+  {% if total.advances_outstanding %}<div class="alert warn">Advances not yet settled: {{ total.advances_outstanding|lkr }}</div>{% endif %}
+  {% if total.reimbursements_due %}<div class="alert warn">Reimbursements due to staff (advance overspend): {{ total.reimbursements_due|lkr }}</div>{% endif %}
+</div>
+
+<div class="card">
+  <h3>Payment history</h3>
+  <div class="scroll"><table>
+    <thead><tr><th>Date</th><th>Ref</th><th>Payee</th><th>Purpose</th><th class="hide-sm">Category</th><th class="r">Paid</th><th class="hide-sm">Txn ref</th><th>Status</th></tr></thead>
+    <tbody>{% for r in payments %}
+      <tr><td class="small">{{ r.payment.paid_on|date:"j M" }}</td><td><a href="{% url 'request_detail' r.pk %}">{{ r.reference }}</a></td>
+        <td>{{ r.payee }}</td><td>{{ r.purpose }}{% if r.instalment != 'single' %} <span class="muted small">({{ r.get_instalment_display }})</span>{% endif %}</td>
+        <td class="hide-sm">{{ r.budget_line.category }}</td><td class="r">{{ r.payment.amount|num }}</td>
+        <td class="small hide-sm">{{ r.payment.get_method_display }} {{ r.payment.reference }}</td>
+        <td><span class="badge b-{{ r.status }}">{{ r.get_status_display }}</span>{% if r.kind == 'supplier' %}{% if r.bill_verified %} <span class="badge b-verified">Bill ✓</span>{% else %} <span class="badge b-pending">Bill ✗</span>{% endif %}{% endif %}</td></tr>
+    {% empty %}<tr><td colspan="8" class="muted">No payments recorded.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+
+<div class="card">
+  <h3>Closure checklist</h3>
+  {% for label, ok, n in checks %}<div class="check {% if ok %}ok{% else %}no{% endif %}"><span class="i">{% if ok %}✓{% else %}✗{% endif %}</span><span>{{ label }}{% if not ok %} ({{ n }} open){% endif %}</span></div>{% endfor %}
+  <p><strong>{% if ready_to_close %}Ready for financial closure.{% else %}Not ready to close.{% endif %}</strong></p>
+</div>
+{% endblock %}

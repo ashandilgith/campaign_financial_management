@@ -1,0 +1,17 @@
+{% extends "finance/base.html" %}{% load money %}
+{% block title %}Campaigns · Campaign Finance{% endblock %}
+{% block content %}
+<div class="actions" style="justify-content:space-between"><h1>Campaigns</h1>
+  {% if can_manage %}<a class="btn" href="{% url 'campaign_create' %}">+ New campaign</a>{% endif %}</div>
+<div class="card scroll"><table>
+  <thead><tr><th>Code</th><th>Name</th><th class="hide-sm">Client</th><th class="hide-sm">Dates</th><th>Status</th><th class="r">Budget</th><th></th></tr></thead>
+  <tbody>{% for c in campaigns %}
+  <tr><td><strong>{% if can_manage %}<a href="{{ c.get_absolute_url }}">{{ c.code }}</a>{% else %}{{ c.code }}{% endif %}</strong></td>
+    <td>{{ c.name }}</td><td class="hide-sm">{{ c.client }}</td>
+    <td class="small hide-sm">{{ c.start_date|date:"j M" }}{% if c.end_date %} – {{ c.end_date|date:"j M Y" }}{% endif %}</td>
+    <td><span class="badge b-{{ c.status }}">{{ c.get_status_display }}</span></td>
+    <td class="r">{{ c.total_budget|num }}</td>
+    <td>{% if c.accepts_requests %}<a class="btn sm ghost" href="{% url 'request_new' c.pk %}">Request</a>{% endif %}</td></tr>
+  {% empty %}<tr><td colspan="7" class="muted">No campaigns yet.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}

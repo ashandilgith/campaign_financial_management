@@ -1,0 +1,171 @@
+{% extends "finance/base.html" %}{% load money %}
+{% block title %}{{ req.reference }} · Campaign Finance{% endblock %}
+{% block content %}
+<p class="small"><a href="{% if can_manage %}{{ req.campaign.get_absolute_url }}{% else %}{% url 'dashboard' %}{% endif %}">← {{ req.campaign }}</a></p>
+<div class="actions" style="justify-content:space-between;align-items:baseline">
+  <h1>{{ req.reference }} · {{ req.purpose }}</h1>
+  <span class="badge b-{{ req.status }}" style="font-size:.9rem">{{ req.get_status_display }}</span>
+</div>
+
+<div class="two">
+<div>
+  <div class="card">
+    <div class="stat big" style="border:none;padding:0 0 .6rem"><div class="k">{{ req.get_kind_display }} → {{ req.payee }}</div><div class="v">{{ req.amount|lkr }}</div></div>
+    <dl class="kv small">
+      <dt>Campaign</dt><dd>{{ req.campaign.code }} · {{ req.campaign.name }}</dd>
+      <dt>Category</dt><dd>{{ req.budget_line.category }}</dd>
+      {% if req.contract %}<dt>Contract</dt><dd>{{ req.contract.description }} ({{ req.contract.total_amount|lkr }}) · {{ req.get_instalment_display }}</dd>{% endif %}
+      <dt>Requested by</dt><dd>{{ req.requested_by.get_full_name|default:req.requested_by.username }} · {{ req.created_at|date:"j M Y H:i" }}</dd>
+      {% if req.needed_by %}<dt>Needed by</dt><dd>{{ req.needed_by|date:"j M Y" }}</dd>{% endif %}
+      {% if req.details %}<dt>Details</dt><dd>{{ req.details|linebreaksbr }}</dd>{% endif %}
+      {% if payment %}<dt>Paid</dt><dd><strong>{{ payment.amount|lkr }}</strong> on {{ payment.paid_on|date:"j M Y" }} · {{ payment.get_method_display }} · ref <strong>{{ payment.reference }}</strong> ({{ payment.recorded_by.username }})</dd>{% endif %}
+      {% if req.kind == 'supplier' and payment %}<dt>Bill</dt><dd>{% if req.bill_verified %}<span class="badge b-verified">Verified</span>{% else %}<span class="badge b-pending">Not verified</span>{% endif %}</dd>{% endif %}
+      {% if settlement %}<dt>Settlement</dt><dd><span class="badge b-{{ settlement.status }}">{{ settlement.get_status_display }}</span>
+        spent {{ settlement.spent_amount|lkr }} · returned {{ settlement.cash_returned|lkr }} · balance
+        <strong class="{% if settlement.balance|neg %}neg{% endif %}">{{ settlement.balance|lkr }}</strong>
+        {% if settlement.balance|neg %}<span class="small">(reimbursement due to staff)</span>{% endif %}
+        {% if settlement.notes %}<br><span class="muted">{{ settlement.notes }}</span>{% endif %}</dd>{% endif %}
+    </dl>
+  </div>
+
+  {# ---------------- MD decision ---------------- #}
+  {% if decision_form %}
+  <div class="card" style="border-color:#ffb020">
+    <h3>Your decision</h3>
+    {% if ctx.over_budget %}<div class="alert">Approving this takes {{ req.budget_line.category }} over budget ({{ ctx.available_after|lkr }}). A comment is required.</div>{% endif %}
+    <form method="post">{% csrf_token %}
+      <p><textarea name="comment" rows="2" placeholder="Comment (required to reject / clarify)"></textarea></p>
+      <div class="actions stretch">
+        <button class="btn ok" formaction="{% url 'request_action' req.pk 'approve' %}">Approve</button>
+        <button class="btn warn" formaction="{% url 'request_action' req.pk 'clarify' %}">Clarify</button>
+        <button class="btn bad" formaction="{% url 'request_action' req.pk 'reject' %}">Reject</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  {# ---------------- Requester responds to clarification ---------------- #}
+  {% if clarify_form %}
+  <div class="card" style="border-color:var(--info)">
+    <h3>MD asked for clarification</h3>
+    {% with last=decisions.last %}{% if last %}<p class="small"><strong>{{ last.decided_by.username }}:</strong> {{ last.comment }}</p>{% endif %}{% endwith %}
+    <form method="post" action="{% url 'request_action' req.pk 'respond' %}">{% csrf_token %}
+      <p>{{ clarify_form.response.label_tag }}{{ clarify_form.response }}</p>
+      <p>{{ clarify_form.new_amount.label_tag }}{{ clarify_form.new_amount }}</p>
+      <button class="btn">Send back to MD</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {# ---------------- Finance records payment ---------------- #}
+  {% if payment_form %}
+  <div class="card" style="border-color:var(--ok)">
+    <h3>Record payment</h3>
+    <p class="small muted">MD approval on record ✓ — check the payee details and documents, then enter the transaction.</p>
+    <form method="post" enctype="multipart/form-data" action="{% url 'request_action' req.pk 'pay' %}">{% csrf_token %}
+      <div class="grid">
+        <p>{{ payment_form.amount.label_tag }}{{ payment_form.amount }}</p>
+        <p>{{ payment_form.paid_on.label_tag }}{{ payment_form.paid_on }}</p>
+        <p>{{ payment_form.method.label_tag }}{{ payment_form.method }}</p>
+      </div>
+      <p>{{ payment_form.reference.label_tag }}{{ payment_form.reference }}</p>
+      <p>{{ payment_form.proof.label_tag }}{{ payment_form.proof }}</p>
+      <button class="btn ok">Record payment</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {# ---------------- Advance settlement ---------------- #}
+  {% if settlement_form %}
+  <div class="card" style="border-color:var(--info)">
+    <h3>Settle this advance</h3>
+    <p class="small muted">Upload receipts below first, then enter what was spent and any cash returned. Advance paid: {{ req.paid_amount|lkr }}.</p>
+    {% if settlement.status == 'returned' %}<div class="alert warn">Finance returned the settlement for correction — see history.</div>{% endif %}
+    <form method="post" action="{% url 'request_action' req.pk 'settle' %}">{% csrf_token %}
+      <div class="grid"><p>{{ settlement_form.spent_amount.label_tag }}{{ settlement_form.spent_amount }}</p>
+        <p>{{ settlement_form.cash_returned.label_tag }}{{ settlement_form.cash_returned }}</p></div>
+      <p>{{ settlement_form.notes.label_tag }}{{ settlement_form.notes }}</p>
+      <button class="btn">Submit settlement</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if is_finance and settlement and settlement.status == 'submitted' %}
+  <div class="card" style="border-color:var(--ok)">
+    <h3>Verify settlement</h3>
+    <form method="post">{% csrf_token %}
+      <p><textarea name="comment" rows="2" placeholder="Comment (required if returning)"></textarea></p>
+      <div class="actions"><button class="btn ok" formaction="{% url 'request_action' req.pk 'verify_settlement' %}">Verify — receipts match</button>
+        <button class="btn bad" formaction="{% url 'request_action' req.pk 'return_settlement' %}">Return for correction</button></div>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if is_finance and req.kind == 'supplier' and req.status == 'paid' and not req.bill_verified %}
+  <div class="card"><form method="post" action="{% url 'request_action' req.pk 'verify_bill' %}" class="actions">{% csrf_token %}
+    <span style="flex:1">Supplier bill checked against payment?</span><button class="btn ok sm">Mark bill verified</button></form></div>
+  {% endif %}
+
+  {# ---------------- Documents ---------------- #}
+  <div class="card">
+    <h3>Documents</h3>
+    {% for a in attachments %}
+      <div class="small" style="padding:.25rem 0"><span class="badge">{{ a.get_kind_display }}</span> <a href="{% url 'attachment_download' a.pk %}" target="_blank">{{ a.filename }}</a>
+        <span class="muted">{{ a.description }} · {{ a.uploaded_by.username }} {{ a.uploaded_at|date:"j M" }}</span></div>
+    {% empty %}<p class="small muted">No documents yet.</p>{% endfor %}
+    {% if is_owner or can_manage %}
+    <form method="post" enctype="multipart/form-data" action="{% url 'request_action' req.pk 'upload' %}" style="margin-top:.6rem">{% csrf_token %}
+      <div class="grid"><p>{{ attachment_form.kind.label_tag }}{{ attachment_form.kind }}</p>
+        <p><label>File</label><input type="file" name="file" required accept="image/*,application/pdf" capture="environment"></p></div>
+      <p>{{ attachment_form.description.label_tag }}{{ attachment_form.description }}</p>
+      <button class="btn sm ghost">Upload</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if can_cancel %}
+  <details class="no-print"><summary>Cancel this request</summary>
+    <form method="post" action="{% url 'request_action' req.pk 'cancel' %}" class="actions" style="margin-top:.5rem">{% csrf_token %}
+      <input type="text" name="reason" placeholder="Reason" style="flex:1"><button class="btn bad sm">Cancel request</button></form>
+  </details>
+  {% endif %}
+</div>
+
+<div>
+  {% if can_manage %}
+  <div class="card">
+    <h3>Budget check · {{ req.budget_line.category }}</h3>
+    <div class="grid">
+      <div class="stat"><div class="k">Budget</div><div class="v">{{ ctx.figures.budget|num }}</div></div>
+      <div class="stat"><div class="k">Paid / advanced</div><div class="v">{{ ctx.figures.cash_out|num }}</div></div>
+      <div class="stat"><div class="k">Committed</div><div class="v">{{ ctx.figures.committed|num }}</div></div>
+      <div class="stat"><div class="k">Other pending</div><div class="v">{{ ctx.other_pending|num }}</div></div>
+    </div>
+    <dl class="kv" style="margin-top:.7rem">
+      <dt>Available before</dt><dd class="{% if ctx.available_before|neg %}neg{% endif %}"><strong>{{ ctx.available_before|lkr }}</strong></dd>
+      {% if ctx.impact %}<dt>This request</dt><dd>− {{ ctx.impact|lkr }}</dd>{% endif %}
+      <dt>Available after</dt><dd class="{% if ctx.available_after|neg %}neg{% endif %}"><strong>{{ ctx.available_after|lkr }}</strong></dd>
+    </dl>
+    {% if ctx.contract %}
+    <h3 style="margin-top:1rem">Contract instalments</h3>
+    <table class="small"><tbody>
+      {% for i in ctx.contract.instalments %}<tr><td><a href="{% url 'request_detail' i.pk %}">{{ i.reference }}</a> {{ i.get_instalment_display }}</td><td class="r">{{ i.amount|num }}</td><td><span class="badge b-{{ i.status }}">{{ i.get_status_display }}</span></td></tr>{% endfor %}
+    </tbody></table>
+    <p class="small">Contract {{ ctx.contract.total|lkr }} · requested {{ ctx.contract.requested|lkr }} · paid {{ ctx.contract.paid|lkr }}</p>
+    {% endif %}
+    <h3 style="margin-top:1rem">{% if req.kind == 'supplier' %}Other requests to {{ req.supplier }}{% else %}Other requests in this category{% endif %}</h3>
+    {% for p in ctx.prior_requests %}
+      <div class="small" style="display:flex;justify-content:space-between;gap:.5rem;padding:.2rem 0"><a href="{% url 'request_detail' p.pk %}">{{ p.reference }} {{ p.purpose|truncatechars:32 }}</a><span>{{ p.amount|num }} <span class="badge b-{{ p.status }}">{{ p.get_status_display }}</span></span></div>
+    {% empty %}<p class="small muted">None.</p>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h3>History</h3>
+    {% for h in history %}
+      <div class="small" style="padding:.3rem 0;border-bottom:1px solid var(--line)"><strong>{{ h.actor.username }}</strong> <span class="muted">{{ h.created_at|date:"j M H:i" }}</span><br>{{ h.message }}</div>
+    {% endfor %}
+  </div>
+</div>
+</div>
+{% endblock %}

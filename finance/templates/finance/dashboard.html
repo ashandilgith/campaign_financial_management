@@ -1,0 +1,39 @@
+{% extends "finance/base.html" %}{% load money %}
+{% block content %}
+<h1>Hello {{ user.first_name|default:user.username }}</h1>
+
+{% if is_md and md_queue_count %}
+<a class="card" href="{% url 'md_queue' %}" style="display:block;border-color:#ffb020;background:#fffaf0;color:inherit">
+  <strong>{{ md_queue_count }} item{{ md_queue_count|pluralize }} waiting for your approval</strong> →</a>
+{% endif %}
+{% if is_finance and finance_queue_count %}
+<a class="card" href="{% url 'finance_queue' %}" style="display:block;border-color:#ffb020;background:#fffaf0;color:inherit">
+  <strong>{{ finance_queue_count }} payment{{ finance_queue_count|pluralize }} / settlement{{ finance_queue_count|pluralize }} to process</strong> →</a>
+{% endif %}
+
+<div class="card">
+  <h3>New request</h3>
+  <p class="small muted">Pick the campaign to request an advance or supplier payment.</p>
+  <div class="actions">
+    {% for c in active_campaigns %}<a class="btn ghost" href="{% url 'request_new' c.pk %}">{{ c.code }} · {{ c.name|truncatechars:28 }}</a>
+    {% empty %}<span class="muted">No active campaigns.</span>{% endfor %}
+  </div>
+</div>
+
+{% if campaign_summaries %}
+<h2>Active campaigns</h2>
+<div class="card scroll"><table>
+  <thead><tr><th>Campaign</th><th class="r">Budget</th><th class="r">Paid</th><th class="r">Committed + pending</th><th class="r">Available</th><th class="hide-sm">Open items</th></tr></thead>
+  <tbody>{% for c, t in campaign_summaries %}
+    <tr><td><a href="{{ c.get_absolute_url }}"><strong>{{ c.code }}</strong></a> {{ c.name }} <span class="badge b-{{ c.status }}">{{ c.get_status_display }}</span></td>
+      <td class="r">{{ t.budget|num }}</td><td class="r">{{ t.cash_out|num }}</td>
+      <td class="r">{{ t.committed|add:t.pending|num }}</td>
+      <td class="r {% if t.available|neg %}neg{% endif %}"><strong>{{ t.available|num }}</strong></td>
+      <td class="small hide-sm">{% if t.pending_requests %}{{ t.pending_requests }} awaiting MD · {% endif %}{% if t.unpaid_approved %}{{ t.unpaid_approved }} to pay · {% endif %}{% if t.unsettled_advances %}{{ t.unsettled_advances }} advance{{ t.unsettled_advances|pluralize }} open · {% endif %}{% if t.unverified_bills %}{{ t.unverified_bills }} bill{{ t.unverified_bills|pluralize }} to verify{% endif %}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% endif %}
+
+<h2>My recent requests</h2>
+{% include "finance/_request_cards.html" with reqs=my_requests empty="You haven't submitted any requests yet." %}
+{% endblock %}

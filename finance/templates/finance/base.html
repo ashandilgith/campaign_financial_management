@@ -1,0 +1,99 @@
+<!doctype html>
+{% load money %}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f3a5f">
+  <title>{% block title %}Campaign Finance{% endblock %}</title>
+  <style>
+    :root{--ink:#1b2430;--muted:#5d6b7a;--line:#e3e8ee;--bg:#f5f7fa;--card:#fff;--brand:#1f3a5f;
+      --ok:#1d7a46;--ok-bg:#e5f5ec;--warn:#9a6200;--warn-bg:#fff3d6;--bad:#b3261e;--bad-bg:#fde8e7;--info:#1f5fa8;--info-bg:#e6f0fb}
+    *{box-sizing:border-box}
+    body{margin:0;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
+    a{color:var(--info);text-decoration:none} a:hover{text-decoration:underline}
+    header{background:var(--brand);color:#fff;position:sticky;top:0;z-index:5}
+    header .bar{max-width:1100px;margin:auto;display:flex;align-items:center;gap:.5rem;padding:.6rem 1rem;flex-wrap:wrap}
+    header .brand{font-weight:700;color:#fff;margin-right:auto}
+    header nav a{color:#dfe8f3;padding:.35rem .6rem;border-radius:6px;font-size:.92rem}
+    header nav a.on,header nav a:hover{background:rgba(255,255,255,.14);color:#fff;text-decoration:none}
+    .count{background:#ffb020;color:#1b2430;border-radius:999px;padding:0 .45rem;font-size:.75rem;font-weight:700;margin-left:.2rem}
+    main{max-width:1100px;margin:auto;padding:1rem}
+    h1{font-size:1.35rem;margin:.2rem 0 1rem} h2{font-size:1.08rem;margin:1.4rem 0 .6rem} h3{font-size:1rem;margin:.2rem 0 .5rem}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1rem;margin-bottom:1rem}
+    .grid{display:grid;gap:.75rem;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+    .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.7rem .85rem}
+    .stat .k{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+    .stat .v{font-size:1.15rem;font-weight:700;margin-top:.15rem;font-variant-numeric:tabular-nums}
+    .stat.big .v{font-size:1.5rem}
+    .neg{color:var(--bad)!important}
+    table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+    th,td{padding:.5rem .55rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+    th{font-size:.76rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;font-weight:600}
+    td.r,th.r{text-align:right;white-space:nowrap}
+    tfoot td{font-weight:700;border-top:2px solid var(--ink)}
+    .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .badge{display:inline-block;padding:.08rem .5rem;border-radius:999px;font-size:.76rem;font-weight:600;white-space:nowrap;background:#eef1f5;color:var(--muted)}
+    .b-submitted,.b-pending{background:var(--warn-bg);color:var(--warn)} .b-clarify{background:var(--info-bg);color:var(--info)}
+    .b-approved{background:var(--info-bg);color:var(--info)} .b-paid,.b-settled,.b-applied,.b-verified,.b-active{background:var(--ok-bg);color:var(--ok)}
+    .b-rejected,.b-cancelled,.b-returned{background:var(--bad-bg);color:var(--bad)} .b-closing{background:var(--warn-bg);color:var(--warn)}
+    .muted{color:var(--muted)} .small{font-size:.85rem}
+    .btn{display:inline-block;border:1px solid var(--brand);background:var(--brand);color:#fff;border-radius:8px;padding:.55rem 1rem;font:inherit;font-weight:600;cursor:pointer;text-align:center}
+    .btn:hover{text-decoration:none;filter:brightness(1.1)}
+    .btn.ghost{background:#fff;color:var(--brand)} .btn.ok{background:var(--ok);border-color:var(--ok)}
+    .btn.bad{background:var(--bad);border-color:var(--bad)} .btn.warn{background:#fff;color:var(--info);border-color:var(--info)}
+    .btn.sm{padding:.3rem .65rem;font-size:.85rem}
+    .actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+    .actions.stretch .btn{flex:1 1 0;padding:.8rem}
+    form p{margin:.6rem 0} label{display:block;font-weight:600;font-size:.88rem;margin-bottom:.2rem}
+    input[type=text],input[type=number],input[type=date],input[type=password],input[type=file],select,textarea{width:100%;padding:.6rem;border:1px solid #c9d2dc;border-radius:8px;font:inherit;background:#fff}
+    textarea{resize:vertical} .helptext{display:block;color:var(--muted);font-size:.8rem;margin-top:.15rem}
+    ul.radio,#id_kind{list-style:none;padding:0;margin:0;display:flex;gap:.5rem}
+    #id_kind label{font-weight:500;border:1px solid #c9d2dc;border-radius:8px;padding:.55rem .8rem;cursor:pointer;background:#fff}
+    #id_kind input{margin-right:.35rem}
+    .errorlist{color:var(--bad);margin:.2rem 0;padding-left:1rem;font-size:.85rem}
+    .msg{padding:.7rem 1rem;border-radius:10px;margin-bottom:.8rem;font-weight:500}
+    .msg.success{background:var(--ok-bg);color:var(--ok)} .msg.error{background:var(--bad-bg);color:var(--bad)} .msg.info,.msg.warning{background:var(--warn-bg);color:var(--warn)}
+    .alert{padding:.7rem .9rem;border-radius:10px;background:var(--bad-bg);color:var(--bad);font-weight:600;margin:.6rem 0}
+    .alert.warn{background:var(--warn-bg);color:var(--warn)}
+    .meter{height:8px;background:#eaeef3;border-radius:99px;overflow:hidden;min-width:70px}
+    .meter span{display:block;height:100%;background:var(--ok)} .meter span.hot{background:#e08a00} .meter span.over{background:var(--bad)}
+    .req-card{display:block;color:inherit;border:1px solid var(--line);background:#fff;border-radius:12px;padding:.8rem;margin-bottom:.6rem}
+    .req-card:hover{text-decoration:none;border-color:#b9c6d4}
+    .req-card .top{display:flex;justify-content:space-between;gap:.5rem;align-items:baseline}
+    .req-card .amt{font-weight:700;font-size:1.1rem;font-variant-numeric:tabular-nums}
+    dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:.3rem 1rem;margin:0} dl.kv dt{color:var(--muted)} dl.kv dd{margin:0}
+    .two{display:grid;gap:1rem;grid-template-columns:1fr} @media(min-width:860px){.two{grid-template-columns:3fr 2fr}}
+    .check{display:flex;gap:.5rem;padding:.3rem 0} .check .i{width:1.2rem;text-align:center;font-weight:700}
+    .check.ok .i{color:var(--ok)} .check.no .i{color:var(--bad)}
+    details summary{cursor:pointer;font-weight:600;color:var(--info)}
+    @media(max-width:640px){
+      main{padding:.75rem} header nav{width:100%;overflow-x:auto;white-space:nowrap}
+      .hide-sm{display:none}
+    }
+    @media print{header,.no-print{display:none!important} body{background:#fff} .card{border:none;padding:0}}
+  </style>
+</head>
+<body>
+{% if user.is_authenticated %}
+<header><div class="bar">
+  <a class="brand" href="{% url 'dashboard' %}">Campaign Finance</a>
+  <nav>
+    {% with u=request.resolver_match.url_name %}
+    <a href="{% url 'dashboard' %}" class="{% if u == 'dashboard' %}on{% endif %}">Home</a>
+    {% if is_md %}<a href="{% url 'md_queue' %}" class="{% if u == 'md_queue' %}on{% endif %}">Approvals{% if md_queue_count %}<span class="count">{{ md_queue_count }}</span>{% endif %}</a>{% endif %}
+    {% if is_finance %}<a href="{% url 'finance_queue' %}" class="{% if u == 'finance_queue' %}on{% endif %}">Finance{% if finance_queue_count %}<span class="count">{{ finance_queue_count }}</span>{% endif %}</a>{% endif %}
+    <a href="{% url 'campaign_list' %}" class="{% if 'campaign' in u %}on{% endif %}">Campaigns</a>
+    <a href="{% url 'request_list' %}" class="{% if u == 'request_list' %}on{% endif %}">Requests</a>
+    {% if can_manage %}<a href="{% url 'audit_log' %}" class="{% if u == 'audit_log' %}on{% endif %}">Audit</a>{% endif %}
+    {% endwith %}
+    <form method="post" action="{% url 'logout' %}" style="display:inline">{% csrf_token %}<button class="btn sm ghost" style="background:transparent;color:#dfe8f3;border-color:rgba(255,255,255,.35)">Sign out {{ user.username }}</button></form>
+  </nav>
+</div></header>
+{% endif %}
+<main>
+  {% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>
