@@ -1,6 +1,6 @@
 # Deploying without a credit card
 
-Both options below were tested end to end on 23 Nov 2026, from a fresh checkout with production settings.
+Both options below were tested end to end on 23 Nov 2026, and Option 1 is live at https://ashandilgith.pythonanywhere.com, from a fresh checkout with production settings.
 The tests covered the health check, the HTTPS redirect, login, every main page, the CSV export, static files,
 and AI calls routed through an allowlist proxy.
 
@@ -11,11 +11,13 @@ and AI calls routed through an allowlist proxy.
 | Uploaded receipts | Persistent disk (default) | `FILE_STORAGE=database`, so files are kept in Postgres and survive redeploys |
 | AI (OpenAI) | `api.openai.com` is on the free-plan allowlist | Unrestricted |
 | Address | `yourname.pythonanywhere.com` | Host's subdomain |
-| Sleeps when idle | No, but free apps must be renewed every few months from the dashboard | Yes, with a slow first load after idle |
+| Sleeps when idle | No, but the free site must be renewed **once a month** (Web tab → "Run until 1 month from today"; PythonAnywhere emails a reminder) | Yes, with a slow first load after idle |
 
 ## Option 1: PythonAnywhere (free)
 
 1. Sign up for a free "Beginner" account at pythonanywhere.com. Your username becomes your web address.
+   Free limits: 512 MB disk (the install uses about 200 MB), 100 CPU-seconds a day for consoles, outbound access only to allowlisted sites.
+   To save disk space, skip the packages SQLite doesn't need: `grep -viE '^(psycopg|gunicorn|anthropic)' requirements.txt > /tmp/req.txt && pip install --no-cache-dir -r /tmp/req.txt`
 2. Open a **Bash console** and run:
    ```bash
    git clone https://github.com/ashandilgith/campaign_financial_management.git
