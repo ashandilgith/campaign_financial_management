@@ -389,10 +389,15 @@ def build_graph(llm, tools):
 def default_llm():
     from langchain_openai import ChatOpenAI
 
+    effort = settings.AGENT_REASONING_EFFORT
+    if not settings.AGENT_USE_RESPONSES_API and effort != "none":
+        # Live eval (Nov 2026): /v1/chat/completions rejects function tools + reasoning_effort for
+        # gpt-6-luna (HTTP 400). Only reasoning_effort="none" works there; the Responses API is the default.
+        effort = "none"
     return ChatOpenAI(
         model=settings.AGENT_MODEL or settings.AI_MODEL or "gpt-6-luna",
         api_key=settings.OPENAI_API_KEY,
-        reasoning_effort=settings.AGENT_REASONING_EFFORT,
+        reasoning_effort=effort,
         use_responses_api=settings.AGENT_USE_RESPONSES_API,
         timeout=90,
         max_retries=2,

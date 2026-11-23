@@ -1,8 +1,9 @@
-{% extends "finance/base.html" %}
+{% extends "finance/base.html" %}{% load money %}
 {% block title %}Ask · Campaign Finance{% endblock %}
 {% block content %}
 <style>
-  .bubble{padding:.7rem .9rem;border-radius:12px;margin:.5rem 0;max-width:46rem;white-space:pre-wrap}
+  .bubble{padding:.7rem .9rem;border-radius:12px;margin:.5rem 0;max-width:46rem}
+  .bubble.user{white-space:pre-wrap}
   .bubble.user{background:var(--brand);color:#fff;margin-left:auto}
   .bubble.assistant{background:#fff;border:1px solid var(--line)}
   .trace{font-size:.78rem;color:var(--muted);margin-top:.4rem}
@@ -18,7 +19,7 @@
 
 <div>
 {% for m in history %}
-  <div class="bubble {{ m.role }}">{% if m.error %}<span class="neg">Sorry, that failed: {{ m.error }}</span>{% else %}{{ m.text }}{% endif %}
+  <div class="bubble {{ m.role }}">{% if m.error %}<span class="neg">Sorry, that failed: {{ m.error }}</span>{% elif m.role == 'assistant' %}{{ m.text|simple_md }}{% else %}{{ m.text }}{% endif %}
     {% if m.tools %}<div class="trace">Looked up: {% for t in m.tools %}<code title="{{ t.args }}">{{ t.name }}</code>{% if not t.ok %}<span class="neg">✗</span>{% endif %} {% endfor %}</div>{% endif %}
   </div>
 {% empty %}

@@ -479,3 +479,12 @@ class AgentTests(Base):
         self.assertIn("LKR 70,000 left", page)
         self.assertIn("get_campaign_budget", page)
         self.assertTrue(AuditLog.objects.filter(action="agent.query").exists())
+
+
+class SimpleMarkdownTests(TestCase):
+    def test_bold_lists_and_escaping(self):
+        from .templatetags.money import simple_md
+        html = simple_md("**LKR 5** left\n- a <script>\n- `SUP-1`")
+        self.assertIn("<strong>LKR 5</strong>", html)
+        self.assertIn("<li>a &lt;script&gt;</li>", html)
+        self.assertIn("<code>SUP-1</code>", html)
