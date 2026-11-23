@@ -15,6 +15,7 @@
     <div class="stat"><div class="k">Available after</div><div class="v {% if c.available_after|neg %}neg{% endif %}">{{ c.available_after|num }}</div></div>
   </div>
   {% if c.contract %}<p class="small">Contract total {{ c.contract.total|lkr }} · paid so far {{ c.contract.paid|lkr }} · {{ c.contract.instalments|length }} instalment request{{ c.contract.instalments|length|pluralize }}</p>{% endif %}
+  {% for w in c.ai_warnings %}<div class="alert warn small">AI check: {{ w }}</div>{% endfor %}
   {% if c.over_budget %}<div class="alert">Approving leaves this category at {{ c.available_after|lkr }} (over budget) — a comment is required.</div>{% endif %}
   <form method="post" action="{% url 'request_action' req.pk 'approve' %}">{% csrf_token %}
     <input type="hidden" name="next" value="{% url 'md_queue' %}">

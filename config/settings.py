@@ -8,6 +8,20 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def _load_dotenv(path):
+    """Read KEY=value lines from a local .env file (no extra dependency). Real env vars win."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+_load_dotenv(BASE_DIR / ".env")
+
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-insecure-key-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = [h for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h]
@@ -108,6 +122,16 @@ LOGOUT_REDIRECT_URL = "login"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CURRENCY = "LKR"
+
+# AI document reading – enabled when the chosen provider's API key is present.
+#   AI_PROVIDER=openai    → GPT-6 Luna (cheap default)    needs OPENAI_API_KEY
+#   AI_PROVIDER=anthropic → Claude                        needs ANTHROPIC_API_KEY
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+AI_PROVIDER = os.environ.get("AI_PROVIDER") or ("anthropic" if ANTHROPIC_API_KEY and not OPENAI_API_KEY else "openai")
+AI_MODEL = os.environ.get("AI_MODEL", "")  # blank = provider default (gpt-6-luna / claude-haiku-5-5)
+AI_REASONING_EFFORT = os.environ.get("AI_REASONING_EFFORT", "low")  # OpenAI only: none/low/medium/high
+AI_AUTO_READ = os.environ.get("AI_AUTO_READ", "1") == "1"  # read bills/receipts/quotes on upload
 
 if not DEBUG:
     SESSION_COOKIE_SECURE = True

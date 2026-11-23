@@ -285,6 +285,24 @@ class Attachment(models.Model):
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
+    # AI document reading (see finance/ai.py). Advisory only – never changes money figures.
+    AI_KINDS = ("quote", "bill", "receipt")
+    ai_status = models.CharField(max_length=10, blank=True, choices=[("done", "Read"), ("error", "Failed")])
+    ai_data = models.JSONField(default=dict, blank=True)
+    ai_error = models.TextField(blank=True)
+    ai_model = models.CharField(max_length=60, blank=True)
+    ai_read_at = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def ai_total(self):
+        from decimal import Decimal, InvalidOperation
+
+        v = self.ai_data.get("total_amount") if self.ai_status == "done" else None
+        try:
+            return Decimal(str(v)) if v is not None else None
+        except InvalidOperation:
+            return None
+
     @property
     def filename(self):
         return self.file.name.rsplit("/", 1)[-1]

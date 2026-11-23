@@ -80,6 +80,7 @@
   <div class="card" style="border-color:var(--info)">
     <h3>Settle this advance</h3>
     <p class="small muted">Upload receipts below first, then enter what was spent and any cash returned. Advance paid: {{ req.paid_amount|lkr }}.</p>
+    {% if prefilled_from_ai %}<p class="small" style="color:#5b3fb0">Amounts pre-filled from the AI-read receipts. Please check them.</p>{% endif %}
     {% if settlement.status == 'returned' %}<div class="alert warn">Finance returned the settlement for correction — see history.</div>{% endif %}
     <form method="post" action="{% url 'request_action' req.pk 'settle' %}">{% csrf_token %}
       <div class="grid"><p>{{ settlement_form.spent_amount.label_tag }}{{ settlement_form.spent_amount }}</p>
@@ -110,15 +111,23 @@
   <div class="card">
     <h3>Documents</h3>
     {% for a in attachments %}
-      <div class="small" style="padding:.25rem 0"><span class="badge">{{ a.get_kind_display }}</span> <a href="{% url 'attachment_download' a.pk %}" target="_blank">{{ a.filename }}</a>
-        <span class="muted">{{ a.description }} · {{ a.uploaded_by.username }} {{ a.uploaded_at|date:"j M" }}</span></div>
+      <div class="small" style="padding:.35rem 0;border-bottom:1px solid var(--line)"><span class="badge">{{ a.get_kind_display }}</span> <a href="{% url 'attachment_download' a.pk %}" target="_blank">{{ a.filename }}</a>
+        <span class="muted">{{ a.description }} · {{ a.uploaded_by.username }} {{ a.uploaded_at|date:"j M" }}</span>
+        {% if a.ai_status == 'done' %}
+          <div style="margin-top:.2rem;color:#5b3fb0">AI: {{ a.ai_data.vendor_name|default:"vendor ?" }} · {{ a.ai_data.document_date|default:"no date" }}{% if a.ai_data.document_number %} · #{{ a.ai_data.document_number }}{% endif %} · <strong>{{ a.ai_total|lkr }}</strong>
+          {% if a.ai_data.line_items %}<details><summary class="small">{{ a.ai_data.line_items|length }} line item{{ a.ai_data.line_items|length|pluralize }}</summary>
+            <table class="small">{% for li in a.ai_data.line_items %}<tr><td>{{ li.description }}</td><td class="r">{% if li.quantity %}{{ li.quantity }} ×{% endif %}</td><td class="r">{{ li.amount|num }}</td></tr>{% endfor %}</table></details>{% endif %}</div>
+        {% elif a.ai_status == 'error' %}<div class="neg" style="margin-top:.2rem">AI could not read this file.</div>{% endif %}
+        {% if ai_enabled and a.kind in 'quote bill receipt' and a.ai_status != 'done' or ai_enabled and a.kind in 'quote bill receipt' and can_manage %}
+          <form method="post" action="{% url 'request_action' req.pk 'ai_read' %}" style="display:inline">{% csrf_token %}<input type="hidden" name="attachment" value="{{ a.pk }}"><button class="btn sm ghost" style="padding:.1rem .5rem;margin-top:.2rem">{% if a.ai_status == 'done' %}Re-read with AI{% else %}Read with AI{% endif %}</button></form>
+        {% endif %}</div>
     {% empty %}<p class="small muted">No documents yet.</p>{% endfor %}
     {% if is_owner or can_manage %}
     <form method="post" enctype="multipart/form-data" action="{% url 'request_action' req.pk 'upload' %}" style="margin-top:.6rem">{% csrf_token %}
       <div class="grid"><p>{{ attachment_form.kind.label_tag }}{{ attachment_form.kind }}</p>
         <p><label>File</label><input type="file" name="file" required accept="image/*,application/pdf" capture="environment"></p></div>
       <p>{{ attachment_form.description.label_tag }}{{ attachment_form.description }}</p>
-      <button class="btn sm ghost">Upload</button>
+      <button class="btn sm ghost">Upload{% if ai_enabled %} &amp; read with AI{% endif %}</button>
     </form>
     {% endif %}
   </div>
@@ -132,6 +141,15 @@
 </div>
 
 <div>
+  {% if ai_checks %}
+  <div class="card" style="border-color:#8a6fd1">
+    <h3>AI document checks <span class="badge" style="background:#efeafd;color:#5b3fb0">advisory</span></h3>
+    {% for lvl, msg in ai_checks %}
+      <div class="check {% if lvl == 'ok' %}ok{% elif lvl == 'warn' %}no{% endif %} small"><span class="i">{% if lvl == 'ok' %}✓{% elif lvl == 'warn' %}!{% else %}·{% endif %}</span><span>{{ msg }}</span></div>
+    {% endfor %}
+    <p class="small muted" style="margin:.4rem 0 0">Read by AI from the uploaded documents. Always confirm against the original before paying or verifying.</p>
+  </div>
+  {% endif %}
   {% if can_manage %}
   <div class="card">
     <h3>Budget check · {{ req.budget_line.category }}</h3>

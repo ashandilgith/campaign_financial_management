@@ -247,3 +247,131 @@ class ViewSmokeTests(TestCase):
     def test_seed_closing_campaign_is_ready(self):
         _, ready, _ = svc.closure_checklist(Campaign.objects.get(code="CMP-2609"))
         self.assertTrue(ready)
+
+
+# --------------------------------------------------------------------------- AI document reading
+from unittest import mock
+
+from django.test import override_settings
+
+from . import ai
+
+
+def fake_doc(**kw):
+    d = {"document_type": "invoice", "vendor_name": "Acme (Pvt) Ltd", "document_number": "INV-1",
+         "document_date": date.today().isoformat(), "currency": "LKR", "total_amount": 30000,
+         "tax_amount": None, "line_items": [], "legibility": "good", "handwritten": False, "notes": ""}
+    d.update(kw)
+    return d
+
+
+@override_settings(OPENAI_API_KEY="test-key", AI_PROVIDER="openai", AI_MODEL="", AI_AUTO_READ=True)
+class AITests(Base):
+    def upload(self, r, kind, doc):
+        att = Attachment.objects.create(request=r, kind=kind, uploaded_by=self.staff,
+                                        file=ContentFile(b"Total Rs. 30,000", name="doc.txt"))
+        with mock.patch.object(ai, "call_model", return_value=doc):
+            svc.run_ai_read(self.fin, att)
+        att.refresh_from_db()
+        return att
+
+    def levels(self, r):
+        return [lvl for lvl, _ in svc.ai_checks(r)]
+
+    def test_defaults_to_cheap_openai_model(self):
+        self.assertTrue(ai.enabled())
+        self.assertEqual(ai.model_name(), "gpt-6-luna")
+
+    def test_strict_schema_requires_every_field(self):
+        sc = ai._strict(ai.DOCUMENT_SCHEMA)
+        self.assertEqual(set(sc["required"]), set(sc["properties"]))
+        self.assertFalse(sc["additionalProperties"])
+        item = sc["properties"]["line_items"]["items"]
+        self.assertEqual(set(item["required"]), {"description", "quantity", "amount"})
+
+    def test_matching_bill_passes(self):
+        r = self.req("30000")
+        svc.decide_request(self.md, r, "approve")
+        self.pay(r)
+        att = self.upload(r, "bill", fake_doc())
+        self.assertEqual(att.ai_total, D("30000"))
+        self.assertNotIn("warn", self.levels(r))
+        self.assertIn("ok", self.levels(r))
+        self.assertTrue(AuditLog.objects.filter(request=r, action="ai.read").exists())
+
+    def test_bill_amount_and_vendor_mismatch_flagged(self):
+        r = self.req("30000")
+        svc.decide_request(self.md, r, "approve")
+        self.pay(r)
+        self.upload(r, "bill", fake_doc(total_amount=33000, vendor_name="Totally Different Traders"))
+        msgs = " ".join(m for lvl, m in svc.ai_checks(r) if lvl == "warn")
+        self.assertIn("Bill total", msgs)
+        self.assertIn("payee", msgs)
+
+    def test_duplicate_bill_across_requests(self):
+        r1, r2 = self.req("30000"), self.req("30000")
+        self.upload(r1, "bill", fake_doc())
+        self.upload(r2, "bill", fake_doc())
+        msgs = " ".join(m for lvl, m in svc.ai_checks(r2) if lvl == "warn")
+        self.assertIn("possible duplicate", msgs)
+        self.assertIn(r1.reference, msgs)
+
+    def test_receipts_prefill_and_check_settlement(self):
+        r = self.req("50000", kind="advance")
+        svc.decide_request(self.md, r, "approve")
+        self.pay(r)
+        self.upload(r, "receipt", fake_doc(document_type="receipt", total_amount=20000, document_number="R1"))
+        self.upload(r, "receipt", fake_doc(document_type="receipt", total_amount=25000, document_number="R2"))
+        self.assertEqual(svc.receipts_total(r), D("45000"))
+        svc.submit_settlement(self.staff, r, spent_amount=D("48000"), cash_returned=D("2000"))
+        r = PaymentRequest.objects.get(pk=r.pk)
+        msgs = " ".join(m for lvl, m in svc.ai_checks(r) if lvl == "warn")
+        self.assertIn("settlement claims", msgs)
+
+    def test_quote_vs_contract_and_wrong_type(self):
+        r = self.req("40000", new_contract_total=D("90000"), instalment="first")
+        self.upload(r, "quote", fake_doc(document_type="quotation", total_amount=90000))
+        self.assertNotIn("warn", self.levels(r))
+        self.upload(r, "bill", fake_doc(document_type="quotation", total_amount=90000, document_number="Q9"))
+        msgs = " ".join(m for lvl, m in svc.ai_checks(r) if lvl == "warn")
+        self.assertIn("looks like a quotation", msgs)
+
+    def test_api_failure_is_recorded_not_raised(self):
+        r = self.req("1000")
+        att = Attachment.objects.create(request=r, kind="bill", uploaded_by=self.staff,
+                                        file=ContentFile(b"x", name="b.txt"))
+        with mock.patch.object(ai, "call_model", side_effect=RuntimeError("401 invalid key")):
+            svc.run_ai_read(self.fin, att)
+        att.refresh_from_db()
+        self.assertEqual(att.ai_status, "error")
+        self.assertIn("info", self.levels(r))
+
+    def test_upload_view_auto_reads(self):
+        r = self.req("30000")
+        self.client.force_login(self.staff)
+        with mock.patch.object(ai, "call_model", return_value=fake_doc(document_type="quotation")) as m:
+            self.client.post(f"/requests/{r.pk}/upload/", {
+                "kind": "quote", "file": ContentFile(b"quote", name="q.txt"), "description": ""})
+        m.assert_called_once()
+        self.assertEqual(r.attachments.get().ai_status, "done")
+
+    def test_image_is_downscaled_to_jpeg(self):
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (4000, 3000), "white").save(buf, format="PNG")
+        block = ai.content_block("photo.png", buf.getvalue())
+        self.assertEqual(block["source"]["media_type"], "image/jpeg")
+        part = ai._to_openai(block)
+        self.assertTrue(part["image_url"].startswith("data:image/jpeg;base64,"))
+
+
+@override_settings(OPENAI_API_KEY="", ANTHROPIC_API_KEY="", AI_PROVIDER="openai")
+class AIDisabledTests(Base):
+    def test_disabled_without_key(self):
+        self.assertFalse(ai.enabled())
+        r = self.req("1000")
+        self.client.force_login(self.staff)
+        with mock.patch.object(ai, "call_model") as m:
+            self.client.post(f"/requests/{r.pk}/upload/", {"kind": "quote", "file": ContentFile(b"q", name="q.txt")})
+        m.assert_not_called()

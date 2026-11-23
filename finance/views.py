@@ -8,6 +8,9 @@ from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from django.conf import settings
+
+from . import ai
 from . import services as svc
 from .forms import (
     AttachmentForm,
@@ -38,6 +41,11 @@ def _errors(request, exc):
     msgs = exc.messages if isinstance(exc, ValidationError) else [str(exc)]
     for m in msgs:
         messages.error(request, m)
+
+
+def _maybe_ai_read(user, att):
+    if ai.enabled() and settings.AI_AUTO_READ and att.kind in Attachment.AI_KINDS:
+        svc.run_ai_read(user, att)
 
 
 def _visible_requests(user):
@@ -77,7 +85,9 @@ def md_queue(request):
     items = []
     qs = _visible_requests(request.user).filter(status=S.SUBMITTED).exclude(requested_by=request.user)
     for req in qs.order_by("created_at"):
-        items.append((req, svc.approval_context(req)))
+        c = svc.approval_context(req)
+        c["ai_warnings"] = [m for lvl, m in svc.ai_checks(req) if lvl == "warn"]
+        items.append((req, c))
     revisions = BudgetRevision.objects.filter(status=BudgetRevision.Status.PENDING).select_related(
         "budget_line__campaign", "proposed_by"
     )
@@ -296,6 +306,7 @@ def request_new(request, campaign_id):
                 att = Attachment.objects.create(request=req, kind=Attachment.Kind.QUOTE, file=d["quote"],
                                                 uploaded_by=request.user)
                 svc.record_attachment(request.user, req, att)
+                _maybe_ai_read(request.user, att)
         except (ValidationError, PermissionDenied) as e:
             _errors(request, e)
         else:
@@ -319,6 +330,8 @@ def request_detail(request, pk):
         "payment": getattr(req, "payment", None),
         "attachment_form": AttachmentForm(),
         "is_owner": req.requested_by_id == user.id,
+        "ai_enabled": ai.enabled(),
+        "ai_checks": svc.ai_checks(req),
     }
     if svc.is_md(user) and req.status == S.SUBMITTED and not ctx["is_owner"]:
         ctx["decision_form"] = DecisionForm()
@@ -330,10 +343,15 @@ def request_detail(request, pk):
             and (ctx["is_owner"] or svc.is_finance(user))
             and (ctx["settlement"] is None or ctx["settlement"].status == Settlement.Status.RETURNED)):
         s = ctx["settlement"]
-        ctx["settlement_form"] = SettlementForm(initial={
-            "spent_amount": s.spent_amount if s else req.paid_amount,
-            "cash_returned": s.cash_returned if s else 0,
-        })
+        read_total = svc.receipts_total(req)
+        if s:
+            spent, returned = s.spent_amount, s.cash_returned
+        elif read_total is not None:
+            spent, returned = read_total, max(req.paid_amount - read_total, 0)
+        else:
+            spent, returned = req.paid_amount, 0
+        ctx["settlement_form"] = SettlementForm(initial={"spent_amount": spent, "cash_returned": returned})
+        ctx["prefilled_from_ai"] = s is None and read_total is not None
     ctx["can_cancel"] = req.status in (S.SUBMITTED, S.CLARIFY, S.APPROVED) and (
         ctx["is_owner"] or svc.is_finance(user) or svc.is_admin(user))
     return render(request, "finance/request_detail.html", ctx)
@@ -394,7 +412,22 @@ def request_action(request, pk, action):
             att.request, att.uploaded_by = req, user
             att.save()
             svc.record_attachment(user, req, att)
-            messages.success(request, "File uploaded.")
+            _maybe_ai_read(user, att)
+            if att.ai_status == "done":
+                messages.success(request, "File uploaded and read by AI – see the checks panel.")
+            elif att.ai_status == "error":
+                messages.warning(request, "File uploaded, but AI could not read it. Check it manually.")
+            else:
+                messages.success(request, "File uploaded.")
+        elif action == "ai_read":
+            svc.require(ai.enabled(), "AI is not configured (set OPENAI_API_KEY in .env).")
+            svc.require(req.requested_by_id == user.id or svc.can_see_all(user))
+            att = get_object_or_404(Attachment, pk=P.get("attachment"), request=req)
+            svc.run_ai_read(user, att)
+            if att.ai_status == "done":
+                messages.success(request, f"AI read {att.filename}.")
+            else:
+                messages.warning(request, f"AI could not read {att.filename}: {att.ai_error[:150]}")
         else:
             raise ValidationError("Unknown action.")
     except (ValidationError, PermissionDenied) as e:

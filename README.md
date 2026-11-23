@@ -14,6 +14,15 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system design review,
 - **Bills and settlements:** supplier bills are uploaded and verified. Advances are settled with receipts and cash returned, then verified by finance. Overspends show as a reimbursement due.
 - **Three separate figures:** budget, cash out (net of returns) and verified spend.
 - **Reports:** budget vs actual, payment history (printable to PDF), CSV export (QuickBooks-ready columns), an append-only audit trail, and a **closure checklist** that blocks closing while anything is open.
+- **AI receipt & bill reading (optional):** uploaded quotes, bills and receipts (photos or PDFs) are read by **OpenAI GPT-6 Luna**, the low-cost model, or by Claude. The app then cross-checks:
+  - bill total against the amount paid
+  - vendor against the payee
+  - quote against the contract value
+  - receipts against the claimed settlement
+  - possible duplicate bills
+  - dates outside the campaign, and illegible or handwritten documents
+
+  Settlements are pre-filled from the receipts. These checks are advisory only: the AI never approves, pays or changes figures.
 - **Roles:** Field Staff (sees own requests only), MD, Finance, Admin.
 
 ## Quick start
@@ -35,7 +44,15 @@ Open http://127.0.0.1:8000. All demo users have the password **`demo1234`**:
 | `finance` | Finance | **Finance** tab: pay, verify bills, verify settlements; close CMP-2609 |
 | `admin` | Admin / superuser | Everything, plus `/admin/` |
 
-Run tests: `python manage.py test finance`
+Run tests: `python manage.py test finance` (the AI is mocked in tests, so no key is needed)
+
+### Turning on AI receipt reading
+
+1. Copy `.env.example` to `.env` (next to `manage.py`).
+2. Set `OPENAI_API_KEY=sk-...` in it. Never commit `.env`; it is git-ignored.
+3. Restart the server. Bills, receipts and quotes are read automatically on upload. Each document also gets a "Read with AI" / "Re-read" button.
+
+The defaults are `AI_PROVIDER=openai`, `AI_MODEL=gpt-6-luna` and `AI_REASONING_EFFORT=low`. One receipt is roughly 1–2k tokens, which is a fraction of a US cent on Luna. For messy handwritten receipts, set `AI_MODEL=gpt-6-sol`, which is about 20× the price. To use Claude instead, set `AI_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`.
 
 ## Project layout
 
@@ -64,4 +81,4 @@ Put Caddy or Nginx in front for HTTPS and to serve `/media/` (uploaded bills and
 
 ## Not in the MVP (next steps)
 
-Notifications (email/WhatsApp), password reset and 2FA, S3 receipt storage, QuickBooks sync, AI receipt reading. See the roadmap in `docs/ARCHITECTURE.md`.
+Notifications (email/WhatsApp), password reset and 2FA, S3 receipt storage, QuickBooks sync, AI-based anomaly detection across campaigns. See the roadmap in `docs/ARCHITECTURE.md`.

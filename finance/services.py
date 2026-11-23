@@ -616,3 +616,157 @@ def verify_settlement(user, req, approve=True, comment=""):
 def record_attachment(user, req, attachment):
     log(user, "attachment.upload",
         f"Uploaded {attachment.get_kind_display()}: {attachment.filename}", request=req)
+
+
+# --------------------------------------------------------------------------- AI-assisted checks
+
+
+def _norm(name):
+    import re
+
+    name = (name or "").lower()
+    name = re.sub(r"\b(pvt|private|ltd|limited|co|company|\(pvt\)|plc|enterprises?)\b", " ", name)
+    return re.sub(r"[^a-z0-9]+", " ", name).strip()
+
+
+def _similar(a, b):
+    from difflib import SequenceMatcher
+
+    a, b = _norm(a), _norm(b)
+    if not a or not b:
+        return True
+    return a in b or b in a or SequenceMatcher(None, a, b).ratio() >= 0.6
+
+
+def ai_checks(req):
+    """Rule-based cross-checks on AI-read documents. Returns [(level, message)], level ∈ {warn, info, ok}.
+
+    These are flags for a human to look at; they never block or change anything.
+    """
+    from datetime import date as _date, timedelta
+
+    from .models import Attachment
+
+    tol = Decimal("1.00")
+    out = []
+    atts = [a for a in req.attachments.all() if a.kind in Attachment.AI_KINDS]
+    read = [a for a in atts if a.ai_status == "done"]
+    for a in atts:
+        if a.ai_status == "error":
+            out.append(("info", f"{a.filename}: AI could not read this file ({a.ai_error[:120]})."))
+
+    expected_type = {"bill": {"invoice", "receipt"}, "receipt": {"receipt", "invoice"}, "quote": {"quotation"}}
+    for a in read:
+        d = a.ai_data
+        dtype = d.get("document_type")
+        if dtype == "unreadable" or d.get("legibility") == "poor":
+            out.append(("warn", f"{a.filename}: hard to read – check the original manually."))
+        elif dtype and dtype not in expected_type.get(a.kind, {dtype}):
+            out.append(("warn", f"{a.filename}: uploaded as {a.get_kind_display().lower()} but looks like a {dtype}."))
+        cur = (d.get("currency") or "LKR").upper()
+        if cur not in ("LKR", "RS", "RS."):
+            out.append(("warn", f"{a.filename}: currency is {cur}, not LKR."))
+        if req.kind == PaymentRequest.Kind.SUPPLIER and req.supplier and d.get("vendor_name"):
+            if not _similar(d["vendor_name"], req.supplier.name):
+                out.append(("warn", f"{a.filename}: issued by '{d['vendor_name']}', but the payee is '{req.supplier.name}'."))
+        doc_date = d.get("document_date")
+        if doc_date:
+            try:
+                dd = _date.fromisoformat(doc_date)
+            except ValueError:
+                dd = None
+            if dd:
+                c = req.campaign
+                if dd > timezone.localdate() + timedelta(days=1):
+                    out.append(("warn", f"{a.filename}: dated {dd:%d %b %Y}, which is in the future."))
+                elif c.start_date and dd < c.start_date - timedelta(days=45):
+                    out.append(("warn", f"{a.filename}: dated {dd:%d %b %Y}, well before the campaign started."))
+                elif c.end_date and dd > c.end_date + timedelta(days=45):
+                    out.append(("warn", f"{a.filename}: dated {dd:%d %b %Y}, well after the campaign ended."))
+        if d.get("handwritten"):
+            out.append(("info", f"{a.filename}: key figures are handwritten."))
+        if d.get("notes"):
+            out.append(("info", f"{a.filename}: {d['notes']}"))
+
+        # Possible duplicates anywhere in the system (same document claimed twice).
+        dupes = Attachment.objects.filter(ai_status="done").exclude(pk=a.pk).exclude(request__status__in=[S.REJECTED, S.CANCELLED])
+        num, total = d.get("document_number"), a.ai_total
+        hits = []
+        for other in dupes.select_related("request"):
+            od = other.ai_data
+            same_no = num and od.get("document_number") and str(od["document_number"]).strip() == str(num).strip() \
+                and _similar(od.get("vendor_name"), d.get("vendor_name"))
+            same_amt = total is not None and other.ai_total == total and od.get("document_date") == d.get("document_date") \
+                and d.get("document_date") and _similar(od.get("vendor_name"), d.get("vendor_name"))
+            if same_no or same_amt:
+                hits.append(other.request.reference)
+        if hits:
+            out.append(("warn", f"{a.filename}: possible duplicate – same document appears on {', '.join(sorted(set(hits)))}."))
+
+    def total_of(kind):
+        vals = [a.ai_total for a in read if a.kind == kind and a.ai_total is not None]
+        return sum(vals, ZERO) if vals else None
+
+    # Amount cross-checks
+    quote_total = total_of("quote")
+    if quote_total is not None:
+        target = req.contract.total_amount if req.contract_id else req.amount
+        label = "contract value" if req.contract_id else "requested amount"
+        if abs(quote_total - target) > tol:
+            out.append(("warn", f"Quotation total {fmt(quote_total)} ≠ {label} {fmt(target)}."))
+        else:
+            out.append(("ok", f"Quotation total matches the {label}."))
+
+    if req.kind == PaymentRequest.Kind.SUPPLIER:
+        bill_total = total_of("bill")
+        if bill_total is not None:
+            paid = req.paid_amount or req.amount
+            if req.contract_id:
+                # an instalment's bill may be for the whole job; compare with contract too
+                if abs(bill_total - paid) > tol and abs(bill_total - req.contract.total_amount) > tol:
+                    out.append(("warn", f"Bill total {fmt(bill_total)} matches neither this instalment ({fmt(paid)}) nor the contract ({fmt(req.contract.total_amount)})."))
+                else:
+                    out.append(("ok", "Bill total matches the instalment or contract value."))
+            elif abs(bill_total - paid) > tol:
+                out.append(("warn", f"Bill total {fmt(bill_total)} ≠ amount {'paid' if req.paid_amount else 'requested'} {fmt(paid)}."))
+            else:
+                out.append(("ok", "Bill total matches the payment."))
+
+    if req.kind == PaymentRequest.Kind.ADVANCE:
+        receipts = [a for a in atts if a.kind == "receipt"]
+        rec_total = total_of("receipt")
+        if rec_total is not None:
+            unread = len(receipts) - len([a for a in receipts if a.ai_total is not None])
+            s = getattr(req, "settlement", None)
+            note = f" ({unread} receipt{'s' if unread != 1 else ''} not read)" if unread else ""
+            if s is not None:
+                if abs(rec_total - s.spent_amount) > tol:
+                    out.append(("warn", f"Receipts add up to {fmt(rec_total)}{note}, but the settlement claims {fmt(s.spent_amount)} spent."))
+                else:
+                    out.append(("ok", f"Receipts add up to the claimed spend ({fmt(rec_total)})."))
+            else:
+                out.append(("info", f"Receipts read so far add up to {fmt(rec_total)}{note}."))
+    order = {"warn": 0, "info": 1, "ok": 2}
+    return sorted(out, key=lambda x: order[x[0]])
+
+
+def receipts_total(req):
+    """Sum of AI-read receipt totals, used to pre-fill a settlement. None if nothing read."""
+    vals = [a.ai_total for a in req.attachments.filter(kind="receipt", ai_status="done") if a.ai_total is not None]
+    return sum(vals, ZERO) if vals else None
+
+
+def run_ai_read(user, attachment):
+    from . import ai
+
+    ai.read_attachment(attachment)
+    if attachment.ai_status == "done":
+        d = attachment.ai_data
+        total = attachment.ai_total
+        log(user, "ai.read",
+            f"AI read {attachment.filename}: {d.get('vendor_name') or 'unknown vendor'}, "
+            f"{d.get('document_date') or 'no date'}, total {fmt(total) if total is not None else 'not found'}",
+            request=attachment.request)
+    else:
+        log(user, "ai.error", f"AI could not read {attachment.filename}", request=attachment.request)
+    return attachment

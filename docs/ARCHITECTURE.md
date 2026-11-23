@@ -117,7 +117,7 @@ available = budget − cash_out − committed − pending
 1. **MVP (this repo):** campaigns and budgets, controlled revisions, advance and supplier requests, instalment contracts, MD approve/reject/clarify with a budget check, finance payments with references, bill verification, advance settlement, budget-vs-actual reports, CSV export, audit trail, closure checklist.
 2. **Pilot hardening (about 3–4 weeks):** email/WhatsApp notifications, Postgres plus nightly backups, S3-compatible receipt storage, password reset/2FA for the MD and Finance, the client's real category list, UAT on one live campaign.
 3. **Integrations:** a QuickBooks Online sync of paid payments as bills/expenses (start with the CSV import that already exists), and supplier master sync.
-4. **Assistive:** AI receipt reading (amount, date, vendor) to pre-fill settlements and flag mismatches; anomaly checks such as duplicate bills or the same supplier paid twice.
+4. **Assistive (✅ first part done):** AI document reading with GPT-6 Luna (default) or Claude. It extracts structured fields from photos and PDFs, and deterministic rules in `services.ai_checks` cross-check those fields. Still to do: cross-campaign anomaly checks such as duplicate bills or the same supplier paid twice.
 
 ## Production deployment (Option A)
 
@@ -127,4 +127,6 @@ available = budget − cash_out − committed − pending
                                          nightly: pg_dump + media sync → off-site backup
 ```
 
-Environment variables: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DATABASE_URL`, `MEDIA_ROOT`.
+AI design: the model only *reads* documents into a strict JSON schema. All judgements ("does the bill match the payment?") are plain Python rules, so they're explainable and auditable, and the AI can't move money. When no API key is set, the feature switches off cleanly.
+
+Environment variables: `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` with `AI_PROVIDER=anthropic`), `AI_MODEL`, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DATABASE_URL`, `MEDIA_ROOT`.
