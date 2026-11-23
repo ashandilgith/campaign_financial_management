@@ -110,7 +110,9 @@ LANGUAGE_CODE = "en-gb"
 TIME_ZONE = "Asia/Colombo"
 USE_I18N = True
 USE_TZ = True
-USE_THOUSAND_SEPARATOR = True
+# Off on purpose: money is formatted by the lkr/num template filters; a global separator
+# breaks numbers in form values and data attributes (e.g. "1,234" ids, JS parseFloat).
+USE_THOUSAND_SEPARATOR = False
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"

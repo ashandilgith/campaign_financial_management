@@ -488,3 +488,17 @@ class SimpleMarkdownTests(TestCase):
         self.assertIn("<strong>LKR 5</strong>", html)
         self.assertIn("<li>a &lt;script&gt;</li>", html)
         self.assertIn("<code>SUP-1</code>", html)
+
+
+class FormRenderingRegressionTests(Base):
+    def test_budget_preview_data_is_machine_readable(self):
+        self.client.force_login(self.staff)
+        html = self.client.get(f"/campaigns/{self.c.pk}/request/").content.decode()
+        self.assertIn('data-avail="100000.00"', html)  # no thousand separators for JS parseFloat
+
+    def test_payment_date_prefilled_in_iso(self):
+        r = self.req("1000")
+        svc.decide_request(self.md, r, "approve")
+        self.client.force_login(self.fin)
+        html = self.client.get(f"/requests/{r.pk}/").content.decode()
+        self.assertIn(f'value="{date.today().isoformat()}"', html)

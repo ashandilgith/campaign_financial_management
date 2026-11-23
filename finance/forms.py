@@ -10,7 +10,12 @@ DEFAULT_CATEGORIES = [
 
 
 class DateInput(forms.DateInput):
+    """HTML5 date input: browsers only accept ISO yyyy-mm-dd values, whatever the locale."""
+
     input_type = "date"
+
+    def __init__(self, attrs=None, format="%Y-%m-%d"):
+        super().__init__(attrs=attrs, format=format)
 
 
 class CampaignForm(forms.ModelForm):

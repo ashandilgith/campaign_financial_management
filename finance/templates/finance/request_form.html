@@ -1,4 +1,4 @@
-{% extends "finance/base.html" %}{% load money %}
+{% extends "finance/base.html" %}{% load money l10n %}
 {% block title %}New request · {{ campaign.code }}{% endblock %}
 {% block content %}
 <h1>New request · {{ campaign.code }} {{ campaign.name }}</h1>
@@ -33,7 +33,7 @@
   <h3>Budget position (LKR)</h3>
   <table class="small"><thead><tr><th>Category</th><th class="r">Budget</th><th class="r">Available</th></tr></thead>
   <tbody>{% for line, f in rows %}
-    <tr data-line="{{ line.pk }}" data-avail="{{ f.available }}"><td>{{ line.category }}</td><td class="r">{{ f.budget|num }}</td>
+    <tr data-line="{{ line.pk }}" data-avail="{{ f.available|unlocalize }}"><td>{{ line.category }}</td><td class="r">{{ f.budget|num }}</td>
       <td class="r {% if f.available|neg %}neg{% endif %}"><strong>{{ f.available|num }}</strong></td></tr>
   {% endfor %}</tbody></table>
   <p class="small muted">Available already accounts for everything paid, approved and awaiting the MD.</p>

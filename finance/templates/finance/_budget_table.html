@@ -1,4 +1,4 @@
-{% load money %}
+{% load money l10n %}
 <div class="scroll"><table>
   <thead><tr>
     <th>Category</th><th class="r">Budget</th><th class="r">Paid / advanced</th><th class="r">Committed</th>
@@ -19,7 +19,7 @@
       {% if revise %}<td class="no-print">
         <details><summary class="small">Revise</summary>
           <form method="post" action="{% url 'line_revise' line.pk %}" style="min-width:220px">{% csrf_token %}
-            <p><label>New amount</label><input type="number" step="0.01" name="new_amount" value="{{ line.approved_amount }}" required></p>
+            <p><label>New amount</label><input type="number" step="0.01" name="new_amount" value="{{ line.approved_amount|unlocalize }}" required></p>
             <p><label>Reason</label><textarea name="reason" rows="2" required></textarea></p>
             <button class="btn sm">{% if is_md %}Apply{% else %}Send to MD{% endif %}</button>
           </form></details></td>{% endif %}
