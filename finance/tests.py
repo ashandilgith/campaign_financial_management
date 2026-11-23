@@ -502,3 +502,36 @@ class FormRenderingRegressionTests(Base):
         self.client.force_login(self.fin)
         html = self.client.get(f"/requests/{r.pk}/").content.decode()
         self.assertIn(f'value="{date.today().isoformat()}"', html)
+
+
+
+class StorageTests(Base):
+    def _upload(self):
+        r = self.req("1000")
+        self.client.force_login(self.staff)
+        self.client.post(f"/requests/{r.pk}/upload/", {"kind": "receipt", "file": ContentFile(b"%PDF-1.4 receipt", name="r.pdf")})
+        return r, r.attachments.get()
+
+    def test_database_storage_round_trip(self):
+        from django.core.files.storage import storages
+
+        from .models import StoredFile
+        with override_settings(STORAGES={**__import__("django.conf").conf.settings.STORAGES,
+                                         "default": {"BACKEND": "finance.storage.DatabaseStorage"}}):
+            storages._storages = {}
+            try:
+                r, att = self._upload()
+                self.assertEqual(StoredFile.objects.count(), 1)
+                resp = self.client.get(f"/attachments/{att.pk}/")
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(b"".join(resp.streaming_content), b"%PDF-1.4 receipt")
+                # a second upload with the same name gets a unique name, not an overwrite
+                self.client.post(f"/requests/{r.pk}/upload/", {"kind": "receipt", "file": ContentFile(b"two", name="r.pdf")})
+                self.assertEqual(StoredFile.objects.count(), 2)
+            finally:
+                storages._storages = {}
+
+    def test_missing_file_is_404_not_500(self):
+        r, att = self._upload()
+        att.file.storage.delete(att.file.name)
+        self.assertEqual(self.client.get(f"/attachments/{att.pk}/").status_code, 404)

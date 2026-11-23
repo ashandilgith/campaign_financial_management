@@ -320,3 +320,16 @@ class AuditLog(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-id"]
+
+
+class StoredFile(models.Model):
+    """Bytes of an uploaded file when FILE_STORAGE=database (see finance/storage.py)."""
+
+    name = models.CharField(max_length=255, unique=True)
+    data = models.BinaryField()
+    size = models.PositiveIntegerField()
+    content_type = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name

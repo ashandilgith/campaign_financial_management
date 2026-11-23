@@ -116,8 +116,11 @@ USE_THOUSAND_SEPARATOR = False
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# FILE_STORAGE=database keeps uploads in Postgres (for hosts whose disk is wiped on redeploy).
+FILE_STORAGE = os.environ.get("FILE_STORAGE", "filesystem")
 STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "default": {"BACKEND": "finance.storage.DatabaseStorage" if FILE_STORAGE == "database"
+                else "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
                     if not DEBUG else "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }

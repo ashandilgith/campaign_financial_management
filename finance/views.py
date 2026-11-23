@@ -439,7 +439,13 @@ def request_action(request, pk, action):
 def attachment_download(request, pk):
     att = get_object_or_404(Attachment, pk=pk)
     _get_request_for(request.user, att.request_id)  # permission check
-    return FileResponse(att.file.open("rb"), as_attachment=False, filename=att.filename)
+    try:
+        fh = att.file.open("rb")
+    except FileNotFoundError:
+        from django.http import Http404
+
+        raise Http404("This file is no longer stored on the server. Please upload it again.")
+    return FileResponse(fh, as_attachment=False, filename=att.filename)
 
 
 # --------------------------------------------------------------------------- AI assistant

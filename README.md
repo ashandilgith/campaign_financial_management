@@ -68,6 +68,10 @@ finance/tests.py        budget math, controls, HTTP smoke tests
 docs/ARCHITECTURE.md    design options and roadmap
 ```
 
+## Free hosting (no card)
+
+See [`docs/DEPLOY.md`](docs/DEPLOY.md): **PythonAnywhere free** (tested; OpenAI is on its allowlist), or a container host plus free Neon Postgres with `FILE_STORAGE=database`.
+
 ## Deploy to Render (one click)
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ashandilgith/campaign_financial_management)
