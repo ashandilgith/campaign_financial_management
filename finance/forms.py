@@ -27,7 +27,7 @@ class CampaignForm(forms.ModelForm):
 
     class Meta:
         model = Campaign
-        fields = ["code", "name", "client", "start_date", "end_date", "status", "notes"]
+        fields = ["code", "name", "client", "client_po_number", "client_email", "commission_pct", "start_date", "end_date", "status", "notes"]
         widgets = {"start_date": DateInput(), "end_date": DateInput(), "notes": forms.Textarea(attrs={"rows": 2})}
 
     def clean_budget_lines(self):

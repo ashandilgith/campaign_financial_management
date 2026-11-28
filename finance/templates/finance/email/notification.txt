@@ -1,0 +1,12 @@
+{% autoescape off %}{{ heading }}
+
+{{ intro }}
+{% for label, value in rows %}
+{{ label }}: {{ value }}{% endfor %}
+{% if note %}
+Note: {{ note }}
+{% endif %}{% if button %}
+{{ button.0 }}: {{ button.1 }}
+{% endif %}
+-- 
+Sent automatically by {{ org }}. Approvals are made in the app after you sign in.{% endautoescape %}

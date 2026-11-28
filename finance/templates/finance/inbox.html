@@ -1,0 +1,18 @@
+{% extends "finance/base.html" %}
+{% block title %}Inbox · Campaign Finance{% endblock %}
+{% block content %}
+<div class="actions" style="justify-content:space-between;align-items:baseline">
+  <h1>{% if show_all %}All emails{% else %}Your inbox{% endif %}</h1>
+  {% if can_see_all %}<div class="actions"><a class="btn ghost sm" href="{% url 'inbox' %}">Mine</a><a class="btn ghost sm" href="{% url 'inbox' %}?all=1">All emails</a></div>{% endif %}
+</div>
+{% if provider == 'simulated' %}<div class="alert warn small">Email is in <strong>simulated</strong> mode for the demo: nothing is sent; this page shows exactly what each person would receive in Outlook. Set <code>EMAIL_PROVIDER=outlook</code> to send for real.</div>{% endif %}
+<div class="card" style="padding:0">
+  <table><thead><tr><th>Received</th>{% if show_all %}<th>To</th>{% endif %}<th>Subject</th><th class="hide-sm">Status</th></tr></thead>
+  <tbody>{% for e in emails %}
+    <tr><td class="small muted" style="white-space:nowrap">{{ e.created_at|date:"j M H:i" }}</td>
+      {% if show_all %}<td class="small">{{ e.to|join:", "|default:"—" }}</td>{% endif %}
+      <td><a href="{% url 'inbox_detail' e.pk %}">{{ e.subject }}</a>{% if e.attachments.all %} <span class="badge b-draft">📎 {{ e.attachments.all|length }}</span>{% endif %}</td>
+      <td class="hide-sm"><span class="badge b-{% if e.status == 'failed' %}rejected{% elif e.status == 'skipped' %}draft{% else %}verified{% endif %}">{{ e.get_status_display }}</span></td></tr>
+  {% empty %}<tr><td colspan="4" class="muted">No emails yet.</td></tr>{% endfor %}</tbody></table>
+</div>
+{% endblock %}

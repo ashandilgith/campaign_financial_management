@@ -1,10 +1,22 @@
 {% extends "finance/base.html" %}{% load money %}
 {% block title %}{{ campaign.code }} report · Campaign Finance{% endblock %}
 {% block content %}
-<div class="actions no-print" style="justify-content:flex-end"><button class="btn ghost" onclick="window.print()">Print / save PDF</button>
+<div class="actions no-print" style="justify-content:flex-end">
+  <a class="btn" href="{% url 'campaign_report_pdf' campaign.pk %}">Download client PDF</a>
+  <a class="btn ghost" href="{% url 'campaign_report_pdf' campaign.pk %}?view=1" target="_blank">Preview PDF</a>
   <a class="btn ghost" href="{% url 'campaign_export' campaign.pk %}">Download CSV</a></div>
+<div class="card no-print">
+  <h3>Email the closure report to the client</h3>
+  <p class="small muted">Sends the PDF (summary, budget vs actual, expense schedule, invoice summary and copies of every bill and receipt){% if email_provider == 'simulated' %}. Email is in <strong>simulated</strong> mode: the message is saved to the Inbox instead of being sent{% elif email_provider == 'outlook' %} from the Outlook mailbox{% endif %}.{% if not ready_to_close %} The report is marked <strong>DRAFT</strong> until the closure checklist is complete.{% endif %}</p>
+  <form method="post" action="{% url 'campaign_report_email' campaign.pk %}" class="grid">{% csrf_token %}
+    <p><label>To</label><input type="email" name="to" value="{{ campaign.client_email }}" required placeholder="client@example.com"></p>
+    <p><label>Message (optional)</label><input type="text" name="message" placeholder="Default covering note is used if blank"></p>
+    <p><button class="btn">Email PDF</button></p>
+  </form>
+  {% if sent_reports %}<p class="small muted">Sent before: {% for e in sent_reports %}{{ e.created_at|date:"j M H:i" }} to {{ e.to|join:", " }} ({{ e.get_status_display|lower }}){% if not forloop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+</div>
 <h1>Campaign financial report — {{ campaign.code }} · {{ campaign.name }}</h1>
-<p class="muted small">{{ campaign.client }} · Status: {{ campaign.get_status_display }}{% if campaign.closed_at %} (closed {{ campaign.closed_at|date:"j M Y" }}){% endif %} · Generated {% now "j M Y H:i" %}</p>
+<p class="muted small">{{ campaign.client }}{% if campaign.client_po_number %} · PO {{ campaign.client_po_number }}{% endif %} · Status: {{ campaign.get_status_display }}{% if campaign.closed_at %} (closed {{ campaign.closed_at|date:"j M Y" }}){% endif %} · Generated {% now "j M Y H:i" %}</p>
 
 <div class="card">
   <h3>Budget versus actual (LKR)</h3>

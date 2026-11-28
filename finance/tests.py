@@ -239,6 +239,11 @@ class ViewSmokeTests(TestCase):
             "new_supplier": "New Print Co", "instalment": "single"})
         self.assertEqual(resp.status_code, 302)
         r = PaymentRequest.objects.get(purpose="Roadshow banners")
+        self.assertEqual(r.status, S.ENDORSE)  # kasun reports to tharindu in the demo
+        self.client.login(username="tharindu", password="demo1234")
+        self.client.post(f"/requests/{r.pk}/endorse/", {"comment": ""})
+        r.refresh_from_db()
+        self.assertEqual(r.status, S.SUBMITTED)
         self.client.login(username="md", password="demo1234")
         self.client.post(f"/requests/{r.pk}/approve/", {"comment": ""})
         r.refresh_from_db()
@@ -535,3 +540,290 @@ class StorageTests(Base):
         r, att = self._upload()
         att.file.storage.delete(att.file.name)
         self.assertEqual(self.client.get(f"/attachments/{att.pk}/").status_code, 404)
+
+
+# --------------------------------------------------------------------------- supervisor layer
+from .models import ApprovalDecision, EmailAttachment, OutboundEmail, StaffProfile
+from . import notify
+
+
+class SupervisorTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.boss = make_user("boss", svc.ROLE_STAFF)
+        StaffProfile.objects.create(user=self.staff, supervisor=self.boss)
+
+    def test_request_goes_to_supervisor_first(self):
+        r = self.req("20000")
+        self.assertEqual(r.status, S.ENDORSE)
+        with self.assertRaises(ValidationError):
+            svc.decide_request(self.md, r, "approve")
+        svc.endorse_request(self.boss, r, "endorse")
+        r.refresh_from_db()
+        self.assertEqual(r.status, S.SUBMITTED)
+        svc.decide_request(self.md, r, "approve")
+        r.refresh_from_db()
+        self.assertEqual(r.status, S.APPROVED)
+        stages = list(r.decisions.values_list("stage", "decision"))
+        self.assertEqual(stages, [("supervisor", "endorse"), ("md", "approve")])
+
+    def test_awaiting_supervisor_counts_as_pending_budget(self):
+        self.req("30000")
+        f = svc.line_figures(self.venue)
+        self.assertEqual(f.pending, D("30000"))
+        self.assertEqual(f.available, D("70000"))
+
+    def test_only_the_supervisor_can_endorse(self):
+        r = self.req("20000")
+        other = make_user("other", svc.ROLE_STAFF)
+        with self.assertRaises(PermissionDenied):
+            svc.endorse_request(other, r, "endorse")
+        with self.assertRaises(PermissionDenied):
+            svc.endorse_request(self.md, r, "endorse")
+
+    def test_supervisor_clarification_returns_to_supervisor(self):
+        r = self.req("20000")
+        svc.endorse_request(self.boss, r, "clarify", "Which venue?")
+        r.refresh_from_db()
+        self.assertEqual(r.status, S.CLARIFY)
+        with self.assertRaises(ValidationError):
+            svc.decide_request(self.md, r, "approve")  # MD can't jump in on the supervisor's question
+        svc.respond_to_clarification(self.staff, r, "Atrium B")
+        r.refresh_from_db()
+        self.assertEqual(r.status, S.ENDORSE)
+
+    def test_supervisor_reject_needs_comment(self):
+        r = self.req("20000")
+        with self.assertRaises(ValidationError):
+            svc.endorse_request(self.boss, r, "reject")
+        svc.endorse_request(self.boss, r, "reject", "Not in plan")
+        r.refresh_from_db()
+        self.assertEqual(r.status, S.REJECTED)
+
+    def test_md_and_unsupervised_staff_skip_the_layer(self):
+        StaffProfile.objects.create(user=self.md, supervisor=self.boss)
+        r = self.req("10000", user=self.md)
+        self.assertEqual(r.status, S.SUBMITTED)
+
+
+# --------------------------------------------------------------------------- email notifications
+class EmailTests(Base):
+    def setUp(self):
+        super().setUp()
+        for u, e in ((self.md, "md@x.lk"), (self.fin, "fin@x.lk"), (self.staff, "staff@x.lk")):
+            u.email = e
+            u.save()
+
+    def test_workflow_sends_simulated_emails(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.req("20000")
+        e = OutboundEmail.objects.get(event="request.needs_approval")
+        self.assertEqual(e.to, ["md@x.lk"])
+        self.assertEqual(e.status, OutboundEmail.Status.SIMULATED)
+        self.assertIn(r.reference, e.subject)
+        self.assertIn(f"/requests/{r.pk}/", e.body_html)
+        with self.captureOnCommitCallbacks(execute=True):
+            svc.decide_request(self.md, r, "approve")
+        self.assertTrue(OutboundEmail.objects.filter(event="request.approve", to=["staff@x.lk"]).exists())
+        self.assertTrue(OutboundEmail.objects.filter(event="request.ready_to_pay", to=["fin@x.lk"]).exists())
+        with self.captureOnCommitCallbacks(execute=True):
+            self.pay(r)
+        self.assertTrue(OutboundEmail.objects.filter(event="payment.recorded").exists())
+
+    def test_user_without_email_is_skipped_not_an_error(self):
+        self.md.email = ""
+        self.md.save()
+        self.req("20000")
+        self.assertEqual(OutboundEmail.objects.get(event="request.needs_approval").status, OutboundEmail.Status.SKIPPED)
+
+    def test_opt_out(self):
+        StaffProfile.objects.create(user=self.md, email_notifications=False)
+        self.req("20000")
+        self.assertEqual(OutboundEmail.objects.get(event="request.needs_approval").to, [])
+
+    @override_settings(EMAIL_PROVIDER="outlook", MS_GRAPH_TENANT_ID="t", MS_GRAPH_CLIENT_ID="c",
+                       MS_GRAPH_CLIENT_SECRET="s", MS_GRAPH_SENDER="finance@agency.lk")
+    def test_outlook_graph_payload(self):
+        import json as _json
+        calls = []
+
+        class Resp:
+            def __init__(self, status, body, headers=None):
+                self.status, self._b, self.headers = status, body, headers or {}
+
+            def read(self):
+                return self._b
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def opener(req, timeout=None):
+            calls.append(req)
+            if "oauth2" in req.full_url:
+                return Resp(200, b'{"access_token": "tok", "expires_in": 3600}')
+            return Resp(202, b"", {"request-id": "abc-123"})
+
+        notify.GraphMailer._token = None
+        e = notify.send("test", addresses=["client@x.lk"], subject="Hi", heading="H", intro="I",
+                        attachments=[("r.pdf", b"%PDF-1.4 test", "application/pdf")])
+        with mock.patch("finance.notify.urllib.request.urlopen", opener):
+            notify.deliver(e.pk)
+        e.refresh_from_db()
+        self.assertEqual(e.status, OutboundEmail.Status.SENT, e.error)
+        self.assertEqual(e.provider_message_id, "abc-123")
+        send_call = calls[-1]
+        self.assertTrue(send_call.full_url.endswith("/users/finance%40agency.lk/sendMail"))
+        self.assertEqual(send_call.headers["Authorization"], "Bearer tok")
+        body = _json.loads(send_call.data)
+        self.assertEqual(body["message"]["toRecipients"][0]["emailAddress"]["address"], "client@x.lk")
+        self.assertEqual(body["message"]["attachments"][0]["name"], "r.pdf")
+
+    @override_settings(EMAIL_PROVIDER="outlook", MS_GRAPH_TENANT_ID="", MS_GRAPH_CLIENT_ID="",
+                       MS_GRAPH_CLIENT_SECRET="", MS_GRAPH_SENDER="")
+    def test_outlook_misconfigured_is_recorded_not_raised(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.req("20000")
+        e = OutboundEmail.objects.get(event="request.needs_approval")
+        self.assertEqual(e.status, OutboundEmail.Status.FAILED)
+        self.assertIn("MS_GRAPH_TENANT_ID", e.error)
+        r.refresh_from_db()
+        self.assertEqual(r.status, S.SUBMITTED)  # the workflow carried on
+
+
+# --------------------------------------------------------------------------- PDF report
+class ReportTests(Base):
+    def _paid_with_bill(self, filename, content):
+        r = self.req("40000")
+        svc.decide_request(self.md, r, "approve")
+        self.pay(r)
+        Attachment.objects.create(request=r, kind="bill", uploaded_by=self.fin, file=ContentFile(content, name=filename))
+        svc.verify_bill(self.fin, r)
+        return r
+
+    def test_report_merges_pdf_bills_and_places_images(self):
+        import io
+
+        from PIL import Image
+        from pypdf import PdfReader
+        from reportlab.pdfgen import canvas
+
+        from .reports import build_campaign_report
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf)
+        c.drawString(100, 700, "Invoice")
+        c.showPage()
+        c.drawString(100, 700, "page 2")
+        c.showPage()
+        c.save()
+        self._paid_with_bill("inv.pdf", buf.getvalue())
+        png = io.BytesIO()
+        Image.new("RGB", (300, 200), "white").save(png, format="PNG")
+        self._paid_with_bill("bill.png", png.getvalue())
+        self.c.commission_pct = D("15")
+        self.c.save()
+        pdf = build_campaign_report(self.c)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        reader = PdfReader(io.BytesIO(pdf))
+        text = "\n".join(p.extract_text() for p in reader.pages)
+        self.assertIn("Budget versus actual", text)
+        self.assertIn("92,000.00", text)          # 80,000 verified + 15% commission
+        self.assertIn("page 2", text)             # the PDF bill's pages were merged in
+        self.assertGreaterEqual(len(reader.pages), 4)
+
+    def test_report_marked_draft_until_closable(self):
+        import io
+
+        from pypdf import PdfReader
+
+        from .reports import build_campaign_report
+        self.req("1000")
+        text = PdfReader(io.BytesIO(build_campaign_report(self.c))).pages[0].extract_text()
+        self.assertIn("not ready for closure", text)
+
+    def test_email_report_to_client(self):
+        self._paid_with_bill("inv.txt", b"Invoice 40,000")
+        with self.captureOnCommitCallbacks(execute=True):
+            e = svc.send_campaign_report(self.fin, self.c, "client@brand.lk")
+        e.refresh_from_db()
+        self.assertEqual(e.to, ["client@brand.lk"])
+        self.assertEqual(e.status, OutboundEmail.Status.SIMULATED)
+        att = e.attachments.get()
+        self.assertTrue(att.filename.endswith("closure-report.pdf"))
+        with self.assertRaises(PermissionDenied):
+            svc.send_campaign_report(self.staff, self.c, "client@brand.lk")
+        with self.assertRaises(ValidationError):
+            svc.send_campaign_report(self.fin, self.c, "not-an-email")
+
+
+class ReportViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_demo", verbosity=0)
+
+    def test_pdf_inbox_and_team_pages(self):
+        c = Campaign.objects.get(code="CMP-2609")
+        self.client.login(username="finance", password="demo1234")
+        resp = self.client.get(f"/campaigns/{c.pk}/report.pdf")
+        self.assertEqual(resp["Content-Type"], "application/pdf")
+        self.assertTrue(resp.content.startswith(b"%PDF"))
+        resp = self.client.post(f"/campaigns/{c.pk}/report/email/", {"to": "x@client.lk"})
+        self.assertEqual(resp.status_code, 302)
+        e = next(m for m in OutboundEmail.objects.filter(event="report.sent") if "x@client.lk" in m.to)
+        self.assertIsNotNone(e)
+        self.assertEqual(self.client.get("/inbox/?all=1").status_code, 200)
+        self.assertEqual(self.client.get(f"/inbox/{e.pk}/").status_code, 200)
+        att = e.attachments.first()
+        self.assertEqual(self.client.get(f"/outbox/attachment/{att.pk}/").status_code, 200)
+        self.client.login(username="tharindu", password="demo1234")
+        resp = self.client.get("/team-approvals/")
+        self.assertContains(resp, "Roadshow banners")
+        self.assertEqual(self.client.get(f"/outbox/attachment/{att.pk}/").status_code, 403)
+        self.client.login(username="kasun", password="demo1234")
+        self.assertEqual(self.client.get("/team-approvals/").status_code, 403)
+        self.assertEqual(self.client.get("/inbox/").status_code, 200)
+
+
+# --------------------------------------------------------------------------- local (llama.cpp) AI provider
+@override_settings(AI_PROVIDER="local", AI_BASE_URL="http://127.0.0.1:8080/v1")
+class LocalAITests(Base):
+    def test_enabled_without_api_key(self):
+        self.assertTrue(ai.enabled())
+
+    def test_pdf_sent_as_text_and_image_as_image(self):
+        import base64
+        import io
+
+        from reportlab.pdfgen import canvas
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf)
+        c.drawString(100, 700, "TOTAL 30,000")
+        c.save()
+        block = ai.content_block("x.pdf", buf.getvalue())
+        parts = ai._local_parts(block)
+        self.assertEqual(parts[0]["type"], "text")
+        self.assertIn("TOTAL 30,000", parts[0]["text"])
+        img = {"type": "image", "source": {"media_type": "image/jpeg", "data": base64.b64encode(b"x").decode()}}
+        self.assertTrue(ai._local_parts(img)[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+
+    def test_local_call_uses_base_url_and_json_schema(self):
+        seen = {}
+
+        class FakeCompletions:
+            def create(self, **kw):
+                seen.update(kw)
+                msg = mock.Mock(content='{"document_type": "invoice", "total_amount": 30000}')
+                return mock.Mock(choices=[mock.Mock(message=msg)])
+
+        class FakeOpenAI:
+            def __init__(self, **kw):
+                seen["client"] = kw
+                self.chat = mock.Mock(completions=FakeCompletions())
+
+        with mock.patch("openai.OpenAI", FakeOpenAI):
+            out = ai.call_model({"type": "text", "text": "Invoice 30,000"}, "ctx")
+        self.assertEqual(out["total_amount"], 30000)
+        self.assertEqual(seen["client"]["base_url"], "http://127.0.0.1:8080/v1")
+        self.assertEqual(seen["response_format"]["type"], "json_schema")

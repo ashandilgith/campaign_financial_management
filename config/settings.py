@@ -145,6 +145,10 @@ CURRENCY = "LKR"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 AI_PROVIDER = os.environ.get("AI_PROVIDER") or ("anthropic" if ANTHROPIC_API_KEY and not OPENAI_API_KEY else "openai")
+# AI_PROVIDER=local: an OpenAI-compatible server on your own hardware, e.g. llama.cpp's
+# `llama-server -m model.gguf --mmproj mmproj.gguf --port 8080` (vision model for receipts).
+AI_BASE_URL = os.environ.get("AI_BASE_URL", "http://127.0.0.1:8080/v1" if AI_PROVIDER == "local" else "")
+AI_LOCAL_API_KEY = os.environ.get("AI_LOCAL_API_KEY", "")
 AI_MODEL = os.environ.get("AI_MODEL", "")  # blank = provider default (gpt-6-luna / claude-haiku-5-5)
 AI_REASONING_EFFORT = os.environ.get("AI_REASONING_EFFORT", "low")  # OpenAI only: none/low/medium/high
 # Query agent ("Ask" page) – LangGraph + OpenAI tool calling.
@@ -160,3 +164,21 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_REDIRECT_EXEMPT = [r"^healthz$"]  # platform health checks may use plain HTTP
     SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "3600"))
+
+# --------------------------------------------------------------------------- email
+# EMAIL_PROVIDER: simulated (default; stored in the in-app inbox), outlook (Microsoft Graph) or smtp.
+EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "simulated")
+SITE_URL = os.environ.get("SITE_URL") or (
+    f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}" if os.environ.get("RENDER_EXTERNAL_HOSTNAME") else "http://127.0.0.1:8000")
+EMAIL_ORG_NAME = os.environ.get("EMAIL_ORG_NAME", "Campaign Finance")
+MS_GRAPH_TENANT_ID = os.environ.get("MS_GRAPH_TENANT_ID", "")
+MS_GRAPH_CLIENT_ID = os.environ.get("MS_GRAPH_CLIENT_ID", "")
+MS_GRAPH_CLIENT_SECRET = os.environ.get("MS_GRAPH_CLIENT_SECRET", "")
+MS_GRAPH_SENDER = os.environ.get("MS_GRAPH_SENDER", "")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", MS_GRAPH_SENDER or "noreply@example.com")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1") == "1"
+REPORT_AGENCY_NAME = os.environ.get("REPORT_AGENCY_NAME", "Your Agency (Pvt) Ltd")

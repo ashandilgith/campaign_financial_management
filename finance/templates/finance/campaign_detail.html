@@ -6,10 +6,11 @@
   <div class="actions">
     {% if campaign.accepts_requests %}<a class="btn" href="{% url 'request_new' campaign.pk %}">+ Request</a>{% endif %}
     <a class="btn ghost" href="{% url 'campaign_report' campaign.pk %}">Report</a>
+    <a class="btn ghost" href="{% url 'campaign_report_pdf' campaign.pk %}">PDF</a>
     <a class="btn ghost" href="{% url 'campaign_export' campaign.pk %}">CSV</a>
   </div>
 </div>
-<p class="muted small">{{ campaign.client }}{% if campaign.start_date %} · {{ campaign.start_date|date:"j M" }} – {{ campaign.end_date|date:"j M Y" }}{% endif %}</p>
+<p class="muted small">{{ campaign.client }}{% if campaign.client_po_number %} · PO {{ campaign.client_po_number }}{% endif %}{% if campaign.start_date %} · {{ campaign.start_date|date:"j M" }} – {{ campaign.end_date|date:"j M Y" }}{% endif %}</p>
 
 <div class="grid" style="margin-bottom:1rem">
   <div class="stat big"><div class="k">Budget</div><div class="v">{{ total.budget|num }}</div></div>

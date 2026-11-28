@@ -29,8 +29,11 @@ from .models import (
     BudgetLine,
     BudgetRevision,
     Campaign,
+    EmailAttachment,
+    OutboundEmail,
     PaymentRequest,
     Settlement,
+    StaffProfile,
     Supplier,
 )
 
@@ -52,7 +55,10 @@ def _visible_requests(user):
     qs = PaymentRequest.objects.select_related(
         "campaign", "budget_line", "supplier", "requested_by", "payment", "settlement"
     )
-    return qs if svc.can_see_all(user) else qs.filter(requested_by=user)
+    if svc.can_see_all(user):
+        return qs
+    # Supervisors see their team's requests so they can endorse them.
+    return qs.filter(Q(requested_by=user) | Q(requested_by__profile__supervisor=user))
 
 
 def _get_request_for(user, pk):
@@ -145,6 +151,8 @@ def campaign_create(request):
             c = svc.create_campaign(
                 request.user, code=d["code"], name=d["name"], client=d["client"],
                 start_date=d["start_date"], end_date=d["end_date"], notes=d["notes"],
+                client_po_number=d["client_po_number"], client_email=d["client_email"],
+                commission_pct=d["commission_pct"],
                 lines=d["budget_lines"],
             )
             if d["status"] != c.status:
@@ -243,8 +251,40 @@ def campaign_report(request, pk):
     checks, ready, _ = svc.closure_checklist(campaign)
     return render(request, "finance/campaign_report.html", {
         "campaign": campaign, "rows": rows, "total": total, "payments": payments,
-        "checks": checks, "ready_to_close": ready,
+        "checks": checks, "ready_to_close": ready, "email_provider": settings.EMAIL_PROVIDER,
+        "sent_reports": campaign.emails.filter(event="report.sent")[:5],
     })
+
+
+@login_required
+def campaign_report_pdf(request, pk):
+    from .reports import build_campaign_report
+
+    svc.require(svc.can_see_all(request.user))
+    campaign = get_object_or_404(Campaign, pk=pk)
+    pdf = build_campaign_report(campaign, prepared_by=request.user)
+    svc.log(request.user, "report.pdf", f"Closure report PDF downloaded ({len(pdf) // 1024} KB)", campaign=campaign)
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    disposition = "inline" if request.GET.get("view") else "attachment"
+    resp["Content-Disposition"] = f'{disposition}; filename="{campaign.code}-closure-report.pdf"'
+    return resp
+
+
+@login_required
+@require_POST
+def campaign_report_email(request, pk):
+    campaign = get_object_or_404(Campaign, pk=pk)
+    try:
+        email = svc.send_campaign_report(request.user, campaign, request.POST.get("to", ""), request.POST.get("message", ""))
+        word = {"simulated": "Simulated – saved to the inbox, not sent", "sent": "Sent",
+                "failed": "Sending failed"}.get(email.status, email.get_status_display())
+        if email.status == OutboundEmail.Status.FAILED:
+            messages.error(request, f"Report email failed: {email.error[:200]}")
+        else:
+            messages.success(request, f"Closure report emailed to {', '.join(email.to)}. {word}.")
+    except (ValidationError, PermissionDenied) as e:
+        _errors(request, e)
+    return redirect("campaign_report", pk=pk)
 
 
 @login_required
@@ -335,6 +375,11 @@ def request_detail(request, pk):
     }
     if svc.is_md(user) and req.status == S.SUBMITTED and not ctx["is_owner"]:
         ctx["decision_form"] = DecisionForm()
+    if req.status == S.ENDORSE and not ctx["is_owner"] and (
+            svc.supervisor_of(req.requested_by) == user or svc.is_admin(user)):
+        ctx["endorse_form"] = True
+    ctx["supervisor"] = svc.supervisor_of(req.requested_by)
+    ctx["emails"] = req.emails.all()[:20] if svc.can_see_all(user) else req.emails.filter(recipients=user)[:20]
     if ctx["is_owner"] and req.status == S.CLARIFY:
         ctx["clarify_form"] = ClarifyResponseForm(initial={"new_amount": req.amount})
     if svc.is_finance(user) and req.status == S.APPROVED:
@@ -352,7 +397,7 @@ def request_detail(request, pk):
             spent, returned = req.paid_amount, 0
         ctx["settlement_form"] = SettlementForm(initial={"spent_amount": spent, "cash_returned": returned})
         ctx["prefilled_from_ai"] = s is None and read_total is not None
-    ctx["can_cancel"] = req.status in (S.SUBMITTED, S.CLARIFY, S.APPROVED) and (
+    ctx["can_cancel"] = req.status in (S.ENDORSE, S.SUBMITTED, S.CLARIFY, S.APPROVED) and (
         ctx["is_owner"] or svc.is_finance(user) or svc.is_admin(user))
     return render(request, "finance/request_detail.html", ctx)
 
@@ -363,7 +408,12 @@ def request_action(request, pk, action):
     req = _get_request_for(request.user, pk)
     user, P = request.user, request.POST
     try:
-        if action in ("approve", "reject", "clarify"):
+        if action in ("endorse", "sup_reject", "sup_clarify"):
+            svc.endorse_request(user, req, action.replace("sup_", ""), P.get("comment", ""))
+            messages.success(request, f"{req.reference}: {req.get_status_display()}.")
+            if P.get("next"):
+                return redirect(P["next"])
+        elif action in ("approve", "reject", "clarify"):
             svc.decide_request(user, req, action, P.get("comment", ""))
             messages.success(request, f"{req.reference}: {req.get_status_display()}.")
             if P.get("next"):
@@ -371,9 +421,10 @@ def request_action(request, pk, action):
         elif action == "respond":
             form = ClarifyResponseForm(P)
             if not form.is_valid():
-                raise ValidationError("Write a response for the MD.")
+                raise ValidationError("Write a response for the approver.")
             svc.respond_to_clarification(user, req, form.cleaned_data["response"], form.cleaned_data["new_amount"])
-            messages.success(request, "Response sent – the request is back with the MD.")
+            messages.success(request, "Response sent – the request is back with "
+                             + ("your supervisor." if req.status == S.ENDORSE else "the MD."))
         elif action == "cancel":
             svc.cancel_request(user, req, P.get("reason", ""))
             messages.success(request, "Request cancelled.")
@@ -482,3 +533,53 @@ def ask_view(request):
         return redirect("ask")
     return render(request, "finance/ask.html", {"history": history, "examples": ASK_EXAMPLES,
                                                 "agent_enabled": agent.enabled()})
+
+
+# --------------------------------------------------------------------------- supervisor queue
+
+
+@login_required
+def supervisor_queue(request):
+    user = request.user
+    team = StaffProfile.objects.filter(supervisor=user).values_list("user_id", flat=True)
+    svc.require(team or svc.is_admin(user), "You do not supervise anyone.")
+    qs = PaymentRequest.objects.filter(status=S.ENDORSE).select_related("campaign", "budget_line", "supplier", "requested_by")
+    if not svc.is_admin(user):
+        qs = qs.filter(requested_by_id__in=list(team))
+    items = []
+    for req in qs.exclude(requested_by=user).order_by("created_at"):
+        c = svc.approval_context(req)
+        c["ai_warnings"] = [m for lvl, m in svc.ai_checks(req) if lvl == "warn"]
+        items.append((req, c))
+    return render(request, "finance/supervisor_queue.html", {"items": items})
+
+
+# --------------------------------------------------------------------------- inbox (simulated email)
+
+
+def _visible_emails(user):
+    qs = OutboundEmail.objects.prefetch_related("attachments")
+    return qs if svc.can_see_all(user) else qs.filter(recipients=user)
+
+
+@login_required
+def inbox(request):
+    show_all = svc.can_see_all(request.user) and request.GET.get("all") == "1"
+    qs = _visible_emails(request.user) if show_all else OutboundEmail.objects.filter(recipients=request.user)
+    return render(request, "finance/inbox.html", {
+        "emails": qs.prefetch_related("attachments")[:200], "show_all": show_all,
+        "can_see_all": svc.can_see_all(request.user), "provider": settings.EMAIL_PROVIDER,
+    })
+
+
+@login_required
+def inbox_detail(request, pk):
+    email = get_object_or_404(_visible_emails(request.user), pk=pk)
+    return render(request, "finance/inbox_detail.html", {"email": email, "provider": settings.EMAIL_PROVIDER})
+
+
+@login_required
+def email_attachment_download(request, pk):
+    att = get_object_or_404(EmailAttachment, pk=pk)
+    svc.require(svc.can_see_all(request.user) or att.email.recipients.filter(pk=request.user.pk).exists())
+    return FileResponse(att.file.open("rb"), as_attachment=True, filename=att.filename)

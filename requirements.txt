@@ -8,3 +8,5 @@ whitenoise>=6.6
 langgraph>=1.0
 langchain-openai>=1.0
 langchain-core>=1.0
+reportlab>=4.2
+pypdf>=5.0

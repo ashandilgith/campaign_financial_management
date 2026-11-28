@@ -1,0 +1,17 @@
+{% extends "finance/base.html" %}
+{% block title %}{{ email.subject }} · Inbox{% endblock %}
+{% block content %}
+<p class="small"><a href="{% url 'inbox' %}">← Inbox</a></p>
+<div class="card">
+  <h2 style="margin-top:0">{{ email.subject }}</h2>
+  <dl class="small">
+    <dt>To</dt><dd>{{ email.to|join:", "|default:"(no address on file)" }}</dd>
+    {% if email.cc %}<dt>Cc</dt><dd>{{ email.cc|join:", " }}</dd>{% endif %}
+    <dt>Sent</dt><dd>{{ email.created_at|date:"j M Y H:i" }} · via {{ email.provider }} · <span class="badge b-{% if email.status == 'failed' %}rejected{% else %}verified{% endif %}">{{ email.get_status_display }}</span></dd>
+    {% if email.error %}<dt>Error</dt><dd class="neg">{{ email.error }}</dd>{% endif %}
+    {% if email.request %}<dt>Request</dt><dd><a href="{% url 'request_detail' email.request.pk %}">{{ email.request.reference }}</a></dd>{% endif %}
+    {% if email.attachments.all %}<dt>Attachments</dt><dd>{% for a in email.attachments.all %}<a href="{% url 'email_attachment' a.pk %}">📎 {{ a.filename }}</a> ({{ a.size|filesizeformat }}){% if not forloop.last %}, {% endif %}{% endfor %}</dd>{% endif %}
+  </dl>
+</div>
+<iframe title="Email body" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="{{ email.body_html }}" style="width:100%;height:640px;border:1px solid #e1e4e8;border-radius:8px;background:#f4f5f7"></iframe>
+{% endblock %}
