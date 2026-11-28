@@ -14,7 +14,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system design review,
 - **Client closure report as PDF (new):** one click builds the report Arun's team used to paste together by hand. It has a summary against the client PO, budget vs actual, an expense schedule with the evidence for each payment, advance settlements, an invoice summary (verified spend + agency commission %), the closure checklist and an appendix with every bill and receipt (photos placed on the page, PDF invoices merged in). It is marked DRAFT until the checklist is complete, and can be downloaded or **emailed to the client** from the report page.
 - **MD approval screen:** budget, already paid, available before and after, contract position, and prior payments to the same supplier. One tap to approve, clarify or reject. Going over budget needs a comment. A snapshot of the figures is stored with each decision. Nobody can approve their own request.
 - **Finance:** pays only MD-approved requests and must enter a transaction reference. Optional payment proof upload and partial payment.
-- **Bills and settlements:** supplier bills are uploaded and verified. Advances are settled with receipts and cash returned, then verified by finance. Overspends show as a reimbursement due.
+- **Bills and settlements:** supplier bills are uploaded and verified. Advances are settled with receipts and cash returned, then verified by finance. **Overspends are paid back (new):** when finance verifies an overspent settlement, the app raises a reimbursement claim (RMB-…) in the staff member's name. It goes through the same supervisor and MD approval and budget check, and finance pays it like any request. Each advance can have only one claim, and the closure checklist blocks closing while an overspend is unclaimed.
 - **Three separate figures:** budget, cash out (net of returns) and verified spend.
 - **Reports:** budget vs actual, payment history (printable to PDF), CSV export (QuickBooks-ready columns), an append-only audit trail, and a **closure checklist** that blocks closing while anything is open.
 - **AI receipt & bill reading (optional):** uploaded quotes, bills and receipts (photos or PDFs) are read by **OpenAI GPT-6 Luna**, the low-cost model, or by Claude. The app then cross-checks:
@@ -27,6 +27,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system design review,
 
   Settlements are pre-filled from the receipts. These checks are advisory only: the AI never approves, pays or changes figures.
 - **Ask AI (query agent):** a LangGraph agent on GPT-6 Luna answers plain-English questions such as "How much is left for promoters on CMP-2611?" or "Which advances are still open?". It uses 9 read-only, role-scoped tools built on the same budget code as the screens. Field staff only see their own requests, and the agent can't approve or pay anything.
+- **Client PO on file (new):** attach the client's PO (PDF, image, Word, Excel or a saved Outlook email) when creating a campaign or later from the campaign page. It is the first page of the closure report's appendix.
+- **Individual logins (new):** each person has their own account. Admins load everyone from a CSV (`python manage.py invite_users users.csv`) or tick users in `/admin/` → *Users* → "Email a set-password invitation". Each person gets a one-time link valid for 3 days. Sign-in has **Forgot your password?**, passwords need 10+ characters and can't be common, and everyone can change theirs under *Security*.
+- **Two-factor sign-in (new):** a 6-digit code from Google or Microsoft Authenticator. Anyone can turn it on under *Security*. With `TWO_FACTOR_REQUIRED=1`, MD, Finance and Admin must use it. Five wrong codes sign the person out. A lost phone is reset by an admin (*Staff profiles* → "Reset two-factor"). It is off by default so the shared demo logins keep working.
 - **Roles:** Field Staff (sees own requests only), MD, Finance, Admin.
 
 ## Quick start
@@ -119,4 +122,4 @@ Put Caddy or Nginx in front for HTTPS and to serve `/media/` (uploaded bills and
 
 ## Not in the MVP (next steps)
 
-WhatsApp alerts, reading the client PO straight from an Outlook inbox, password reset and 2FA, S3 receipt storage, QuickBooks sync, AI-based anomaly detection across campaigns. See the roadmap in `docs/ARCHITECTURE.md`.
+WhatsApp alerts, reading the client PO straight from an Outlook inbox, Microsoft 365 single sign-on, S3 receipt storage, QuickBooks sync, AI-based anomaly detection across campaigns. See the roadmap in `docs/ARCHITECTURE.md`.

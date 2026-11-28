@@ -185,6 +185,8 @@ def line_figures(line, requests=None, contracts=None):
             # Approving the first instalment commits the full quote, so show that exposure.
             f.pending += c.total_amount
 
+    # Overspent advances that already have a reimbursement claim are tracked through that claim instead.
+    claimed = {r.linked_advance_id for r in live if r.kind == PaymentRequest.Kind.REIMBURSE and r.linked_advance_id}
     returned = ZERO
     for r in live:
         if r.status in PaymentRequest.OPEN_STATUSES:
@@ -204,7 +206,7 @@ def line_figures(line, requests=None, contracts=None):
             if s is not None and s.status == Settlement.Status.VERIFIED:
                 returned += s.cash_returned
                 f.verified += s.spent_amount
-                if s.balance < 0:
+                if s.balance < 0 and r.id not in claimed:
                     f.reimbursements_due += -s.balance
             else:
                 f.advances_outstanding += r.paid_amount
@@ -290,13 +292,16 @@ def approval_context(req):
 
 @transaction.atomic
 def create_campaign(user, *, code, name, client="", start_date=None, end_date=None, notes="", lines=(),
-                    client_po_number="", client_email="", commission_pct=ZERO):
+                    client_po_number="", client_email="", commission_pct=ZERO, client_po_file=None):
     require(can_manage_campaigns(user))
     campaign = Campaign.objects.create(
         code=code, name=name, client=client, start_date=start_date, end_date=end_date,
         notes=notes, created_by=user, client_po_number=client_po_number, client_email=client_email,
         commission_pct=commission_pct or ZERO,
     )
+    if client_po_file:
+        campaign.client_po_file = client_po_file
+        campaign.save(update_fields=["client_po_file"])
     for i, (category, amount) in enumerate(lines):
         BudgetLine.objects.create(campaign=campaign, category=category, approved_amount=amount, sort_order=i)
     log(user, "campaign.create", f"Created campaign with budget {fmt(campaign.total_budget)}", campaign=campaign)
@@ -398,8 +403,10 @@ def closure_checklist(campaign):
     pending_revisions = BudgetRevision.objects.filter(
         budget_line__campaign=campaign, status=BudgetRevision.Status.PENDING
     ).count()
+    unclaimed = sum(1 for line, f in rows if f.reimbursements_due > 0)
     checks = [
         ("No requests awaiting approval", total.pending_requests == 0, total.pending_requests),
+        ("Staff overspends claimed (reimbursement raised)", unclaimed == 0, unclaimed),
         ("No approved requests waiting for payment", total.unpaid_approved == 0, total.unpaid_approved),
         ("All staff advances settled and verified", total.unsettled_advances == 0, total.unsettled_advances),
         ("All supplier bills verified", total.unverified_bills == 0, total.unverified_bills),
@@ -443,7 +450,7 @@ def _validate_contract_amount(contract, amount, exclude_pk=None):
 def submit_request(user, *, campaign, budget_line, kind, amount, purpose, details="",
                    supplier=None, contract=None, new_contract_total=None,
                    new_contract_description="", instalment=PaymentRequest.Instalment.SINGLE,
-                   needed_by=None):
+                   needed_by=None, linked_advance=None):
     if not campaign.accepts_requests:
         raise ValidationError("This campaign is closed to new requests.")
     if budget_line.campaign_id != campaign.id:
@@ -452,9 +459,11 @@ def submit_request(user, *, campaign, budget_line, kind, amount, purpose, detail
         supplier = contract.supplier
     if kind == PaymentRequest.Kind.SUPPLIER and supplier is None:
         raise ValidationError("Choose a supplier for a supplier payment.")
-    if kind == PaymentRequest.Kind.ADVANCE:
+    if kind in (PaymentRequest.Kind.ADVANCE, PaymentRequest.Kind.REIMBURSE):
         supplier = contract = None
         instalment = PaymentRequest.Instalment.SINGLE
+    if kind == PaymentRequest.Kind.REIMBURSE and linked_advance is None:
+        raise ValidationError("A reimbursement is raised from an overspent advance settlement.")
 
     if contract is None and new_contract_total:
         if instalment == PaymentRequest.Instalment.SINGLE:
@@ -481,7 +490,7 @@ def submit_request(user, *, campaign, budget_line, kind, amount, purpose, detail
     req = PaymentRequest.objects.create(
         campaign=campaign, budget_line=budget_line, kind=kind, supplier=supplier,
         contract=contract, instalment=instalment, amount=amount, purpose=purpose,
-        details=details, needed_by=needed_by, requested_by=user,
+        details=details, needed_by=needed_by, requested_by=user, linked_advance=linked_advance,
         status=S.ENDORSE if supervisor else S.SUBMITTED,
     )
     route = f" → supervisor {supervisor.get_full_name() or supervisor.username}" if supervisor else " → MD"
@@ -670,6 +679,8 @@ def verify_settlement(user, req, approve=True, comment=""):
             extra = f" Reimbursement due to staff: {fmt(-s.balance)}."
         log(user, "settlement.verify", f"Settlement verified.{extra} {comment}".strip(), request=req)
         notify.settlement_checked(req, True, comment)
+        if s.balance < 0:
+            request_reimbursement(user, req)
     else:
         if not comment.strip():
             raise ValidationError("Explain what needs correcting.")
@@ -677,6 +688,29 @@ def verify_settlement(user, req, approve=True, comment=""):
         s.save()
         log(user, "settlement.return", f"Settlement returned for correction: {comment}", request=req)
         notify.settlement_checked(req, False, comment)
+
+
+def request_reimbursement(user, advance):
+    """Raise the staff member's claim for an advance overspend as its own request.
+
+    It goes through the same supervisor / MD approval and budget check as any payment, and an
+    advance can have only one claim, so the same overspend can never be paid twice.
+    """
+    require(is_finance(user), "Only finance raises reimbursement claims.")
+    s = getattr(advance, "settlement", None)
+    if s is None or s.status != Settlement.Status.VERIFIED or s.balance >= 0:
+        raise ValidationError("Only a verified, overspent advance settlement can be reimbursed.")
+    if PaymentRequest.objects.filter(linked_advance=advance).exists():
+        raise ValidationError("A reimbursement has already been raised for this advance.")
+    req = submit_request(
+        advance.requested_by, campaign=advance.campaign, budget_line=advance.budget_line,
+        kind=PaymentRequest.Kind.REIMBURSE, amount=-s.balance, linked_advance=advance,
+        purpose=f"Reimbursement of overspend on {advance.reference}",
+        details=f"Advance {fmt(advance.paid_amount)}; verified spend {fmt(s.spent_amount)}; "
+                f"cash returned {fmt(s.cash_returned)}.",
+    )
+    log(user, "reimbursement.raise", f"Raised {req.reference} for {fmt(req.amount)} overspend", request=advance)
+    return req
 
 
 def record_attachment(user, req, attachment):
@@ -836,6 +870,52 @@ def run_ai_read(user, attachment):
     else:
         log(user, "ai.error", f"AI could not read {attachment.filename}", request=attachment.request)
     return attachment
+
+
+PO_TYPES = (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".docx", ".xlsx", ".msg", ".eml")
+
+
+@transaction.atomic
+def attach_client_po(user, campaign, upload, po_number=""):
+    """Attach (or replace) the client-approved PO that the campaign budget is based on."""
+    require(can_manage_campaigns(user), "Only finance, the MD or an admin can attach the client PO.")
+    if upload is None:
+        raise ValidationError("Choose the PO file.")
+    if not upload.name.lower().endswith(PO_TYPES):
+        raise ValidationError("Upload the PO as a PDF, photo, Word/Excel file or saved email.")
+    replaced = bool(campaign.client_po_file)
+    campaign.client_po_file = upload
+    if po_number.strip():
+        campaign.client_po_number = po_number.strip()
+    campaign.save(update_fields=["client_po_file", "client_po_number"])
+    log(user, "campaign.po", f"{'Replaced' if replaced else 'Attached'} client PO {campaign.client_po_number}".strip()
+        + f" ({upload.name})", campaign=campaign)
+
+
+# --------------------------------------------------------------------------- user accounts
+
+
+def invite_user(actor, user):
+    """Email a one-time link (valid 3 days) for the person to set their own password."""
+    from django.contrib.auth.tokens import default_token_generator
+    from django.utils.encoding import force_bytes
+    from django.utils.http import urlsafe_base64_encode
+
+    require(actor is None or is_admin(actor) or actor.is_superuser, "Only an admin can invite users.")
+    if not user.email:
+        raise ValidationError(f"{user.username} has no email address.")
+    if user.has_usable_password() and user.last_login:
+        raise ValidationError(f"{user.username} has already signed in; use password reset instead.")
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    link = notify.absolute(f"/reset/{uid}/{default_token_generator.make_token(user)}/")
+    notify.send("user.invite", users=[user], subject="Your Campaign Finance account",
+                heading=f"Welcome, {user.get_full_name() or user.username}",
+                intro="An account has been created for you. Set your password to sign in. The link works once and "
+                      "expires in 3 days.",
+                rows=[("Username", user.username), ("Roles", ", ".join(sorted(roles_of(user))) or "—")],
+                button=("Set your password", link))
+    if actor:
+        log(actor, "user.invite", f"Invitation sent to {user.username} <{user.email}>")
 
 
 # --------------------------------------------------------------------------- reports & email

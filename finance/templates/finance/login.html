@@ -10,5 +10,6 @@
     <p><label for="id_password">Password</label>{{ form.password }}</p>
     <button class="btn" style="width:100%">Sign in</button>
   </form>
+  <p class="small" style="margin-top:.8rem"><a href="{% url 'password_reset' %}">Forgot your password?</a></p>
 </div>
 {% endblock %}

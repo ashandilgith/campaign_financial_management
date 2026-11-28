@@ -99,6 +99,8 @@ def _evidence_label(req):
     parts = []
     if req.kind == PaymentRequest.Kind.SUPPLIER:
         parts.append("Bill verified" if req.bill_verified else "Bill not verified")
+    elif req.kind == PaymentRequest.Kind.REIMBURSE:
+        parts.append(f"Reimburses overspend on {req.linked_advance.reference}" if req.linked_advance else "Reimbursement")
     else:
         s = getattr(req, "settlement", None)
         parts.append("Settled, verified" if s and s.status == Settlement.Status.VERIFIED else "Not settled")
@@ -241,16 +243,26 @@ def build_campaign_report(campaign, prepared_by=None) -> bytes:
     # ---------------------------------------------------------------- appendix: supporting documents
     markers, pdf_inserts = {}, []
     evidence = [(r, a) for r in paid for a in r.attachments.all() if a.kind in EVIDENCE_KINDS]
+    if campaign.client_po_file:
+        evidence.insert(0, (None, campaign.client_po_file))
     if evidence:
         story += [PageBreak(), Paragraph("Appendix: supporting documents", S_H2),
-                  Paragraph("A copy of every bill and receipt on file, in the order of the expense schedule.", S_SMALL),
+                  Paragraph("The client PO, then a copy of every bill and receipt on file, in the order of the "
+                            "expense schedule.", S_SMALL),
                   Spacer(1, 6)]
         for i, (r, a) in enumerate(evidence):
-            caption = f"{r.reference} · {r.payee} · {a.get_kind_display()} · {a.filename}"
+            if r is None:   # the client PO itself
+                fname = a.name.rsplit("/", 1)[-1]
+                caption = f"Client PO {campaign.client_po_number or ''} · {fname}"
+                fileobj = a
+            else:
+                fname = a.filename
+                caption = f"{r.reference} · {r.payee} · {a.get_kind_display()} · {fname}"
+                fileobj = a.file
             block = [Paragraph(f"<b>{escape(caption)}</b>", S_CELL), Spacer(1, 3)]
-            name = a.filename.lower()
+            name = fname.lower()
             try:
-                with a.file.open("rb") as fh:
+                with fileobj.open("rb") as fh:
                     raw = fh.read()
             except Exception:  # noqa: BLE001 – a missing file must not stop the report
                 raw = None
@@ -266,6 +278,10 @@ def build_campaign_report(campaign, prepared_by=None) -> bytes:
                 block.append(Paragraph("The PDF document follows on the next page(s).", S_SMALL))
                 story += [KeepTogether(block), PageMarker(key, markers), PageBreak()]
                 pdf_inserts.append((key, raw))
+            elif not name.endswith((".txt", ".csv")):
+                block.append(Paragraph("This file type can't be reproduced in the PDF; it is kept in the system "
+                                       "and available on request.", S_SMALL))
+                story += [KeepTogether(block), Spacer(1, 10)]
             else:
                 text = raw.decode("utf-8", "replace")[:3000]
                 block.append(Paragraph(escape(text).replace("\n", "<br/>"), S_SMALL))

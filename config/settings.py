@@ -51,6 +51,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "finance.twofactor.TwoFactorMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -103,7 +104,10 @@ else:
     }
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 10}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
 LANGUAGE_CODE = "en-gb"
@@ -182,3 +186,9 @@ EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1") == "1"
 REPORT_AGENCY_NAME = os.environ.get("REPORT_AGENCY_NAME", "Your Agency (Pvt) Ltd")
+
+# Every Django email (password reset, invitations) goes through the same provider as notifications.
+EMAIL_BACKEND = "finance.mail_backend.OutboxEmailBackend"
+PASSWORD_RESET_TIMEOUT = 3 * 24 * 3600   # invitation / reset links last 3 days
+# Two-factor sign-in: 1 = MD, Finance and Admin must use an authenticator app (off for the shared demo logins)
+TWO_FACTOR_REQUIRED = os.environ.get("TWO_FACTOR_REQUIRED", "0") == "1"

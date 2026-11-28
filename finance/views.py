@@ -144,7 +144,7 @@ def campaign_list(request):
 @login_required
 def campaign_create(request):
     svc.require(svc.can_manage_campaigns(request.user))
-    form = CampaignForm(request.POST or None)
+    form = CampaignForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
         d = form.cleaned_data
         try:
@@ -152,6 +152,7 @@ def campaign_create(request):
                 request.user, code=d["code"], name=d["name"], client=d["client"],
                 start_date=d["start_date"], end_date=d["end_date"], notes=d["notes"],
                 client_po_number=d["client_po_number"], client_email=d["client_email"],
+                client_po_file=d.get("client_po_file"),
                 commission_pct=d["commission_pct"],
                 lines=d["budget_lines"],
             )
@@ -379,6 +380,8 @@ def request_detail(request, pk):
             svc.supervisor_of(req.requested_by) == user or svc.is_admin(user)):
         ctx["endorse_form"] = True
     ctx["supervisor"] = svc.supervisor_of(req.requested_by)
+    ctx["reimbursement"] = PaymentRequest.objects.filter(linked_advance=req).first()
+    ctx["can_raise_reimbursement"] = svc.is_finance(user) and ctx["reimbursement"] is None
     ctx["emails"] = req.emails.all()[:20] if svc.can_see_all(user) else req.emails.filter(recipients=user)[:20]
     if ctx["is_owner"] and req.status == S.CLARIFY:
         ctx["clarify_form"] = ClarifyResponseForm(initial={"new_amount": req.amount})
@@ -425,6 +428,9 @@ def request_action(request, pk, action):
             svc.respond_to_clarification(user, req, form.cleaned_data["response"], form.cleaned_data["new_amount"])
             messages.success(request, "Response sent – the request is back with "
                              + ("your supervisor." if req.status == S.ENDORSE else "the MD."))
+        elif action == "raise_reimbursement":
+            r2 = svc.request_reimbursement(user, req)
+            messages.success(request, f"{r2.reference} raised for approval.")
         elif action == "cancel":
             svc.cancel_request(user, req, P.get("reason", ""))
             messages.success(request, "Request cancelled.")
@@ -484,6 +490,30 @@ def request_action(request, pk, action):
     except (ValidationError, PermissionDenied) as e:
         _errors(request, e)
     return redirect(req)
+
+
+@login_required
+@require_POST
+def campaign_po_upload(request, pk):
+    campaign = get_object_or_404(Campaign, pk=pk)
+    try:
+        svc.attach_client_po(request.user, campaign, request.FILES.get("po"), request.POST.get("po_number", ""))
+        messages.success(request, "Client PO attached.")
+    except (ValidationError, PermissionDenied) as e:
+        _errors(request, e)
+    return redirect(campaign)
+
+
+@login_required
+def campaign_po_download(request, pk):
+    svc.require(svc.can_see_all(request.user))
+    campaign = get_object_or_404(Campaign, pk=pk)
+    if not campaign.client_po_file:
+        from django.http import Http404
+
+        raise Http404("No PO attached.")
+    return FileResponse(campaign.client_po_file.open("rb"), as_attachment=False,
+                        filename=campaign.client_po_file.name.rsplit("/", 1)[-1])
 
 
 @login_required
@@ -583,3 +613,73 @@ def email_attachment_download(request, pk):
     att = get_object_or_404(EmailAttachment, pk=pk)
     svc.require(svc.can_see_all(request.user) or att.email.recipients.filter(pk=request.user.pk).exists())
     return FileResponse(att.file.open("rb"), as_attachment=True, filename=att.filename)
+
+
+# --------------------------------------------------------------------------- account security
+from . import twofactor  # noqa: E402
+
+
+@login_required
+def security(request):
+    p = twofactor.profile(request.user)
+    return render(request, "finance/security.html", {"profile": p, "required": twofactor.required_for(request.user)})
+
+
+@login_required
+def security_setup(request):
+    p = twofactor.profile(request.user)
+    secret = request.session.get("totp_pending") or twofactor.pyotp.random_base32()
+    request.session["totp_pending"] = secret
+    if request.method == "POST":
+        if twofactor.verify(secret, request.POST.get("code")):
+            p.totp_secret, p.totp_enabled = secret, True
+            p.save(update_fields=["totp_secret", "totp_enabled"])
+            request.session[twofactor.SESSION_KEY] = True
+            request.session.pop("totp_pending", None)
+            svc.log(request.user, "user.2fa_on", "Two-factor sign-in turned on")
+            messages.success(request, "Two-factor sign-in is on.")
+            return redirect("dashboard")
+        messages.error(request, "That code didn't match. Check the phone's time and try the newest code.")
+    uri = twofactor.provisioning_uri(request.user, secret)
+    return render(request, "finance/security_setup.html", {
+        "qr": twofactor.qr_svg(uri), "secret": secret, "required": twofactor.required_for(request.user)})
+
+
+@login_required
+def security_verify(request):
+    p = twofactor.profile(request.user)
+    if not p.totp_enabled:
+        return redirect("dashboard")
+    if request.method == "POST":
+        tries = request.session.get("2fa_tries", 0) + 1
+        request.session["2fa_tries"] = tries
+        if twofactor.verify(p.totp_secret, request.POST.get("code")):
+            request.session[twofactor.SESSION_KEY] = True
+            request.session.pop("2fa_tries", None)
+            nxt = request.GET.get("next", "/")
+            return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else "/")
+        if tries >= 5:
+            from django.contrib.auth import logout
+
+            svc.log(request.user, "user.2fa_locked", "Five wrong two-factor codes; signed out")
+            logout(request)
+            messages.error(request, "Too many wrong codes. Sign in again.")
+            return redirect("login")
+        messages.error(request, "Wrong code.")
+    return render(request, "finance/security_verify.html")
+
+
+@login_required
+@require_POST
+def security_disable(request):
+    p = twofactor.profile(request.user)
+    if twofactor.required_for(request.user):
+        messages.error(request, "Two-factor sign-in is required for your role.")
+    elif twofactor.verify(p.totp_secret, request.POST.get("code")):
+        p.totp_enabled, p.totp_secret = False, ""
+        p.save(update_fields=["totp_secret", "totp_enabled"])
+        svc.log(request.user, "user.2fa_off", "Two-factor sign-in turned off")
+        messages.success(request, "Two-factor sign-in turned off.")
+    else:
+        messages.error(request, "Wrong code.")
+    return redirect("security")

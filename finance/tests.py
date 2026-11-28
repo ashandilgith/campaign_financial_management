@@ -120,7 +120,11 @@ class BudgetMathTests(Base):
         self.attach(r, "receipt")
         svc.submit_settlement(self.staff, r, spent_amount=D("12000"), cash_returned=D("0"))
         svc.verify_settlement(self.fin, r)
-        self.assertEqual(svc.line_figures(self.venue).reimbursements_due, D("2000"))
+        # verifying raises the staff claim automatically, so it is pending approval, not "due"
+        claim = r.reimbursement
+        self.assertEqual((claim.kind, claim.amount, claim.requested_by), ("reimburse", D("2000"), self.staff))
+        f = svc.line_figures(self.venue)
+        self.assertEqual((f.reimbursements_due, f.pending), (0, D("2000")))
 
     def test_campaign_totals(self):
         self.req("10000")
@@ -827,3 +831,141 @@ class LocalAITests(Base):
         self.assertEqual(out["total_amount"], 30000)
         self.assertEqual(seen["client"]["base_url"], "http://127.0.0.1:8080/v1")
         self.assertEqual(seen["response_format"]["type"], "json_schema")
+
+
+class ReimbursementTests(Base):
+    def overspent(self):
+        r = self.req("10000", kind="advance")
+        svc.decide_request(self.md, r, "approve")
+        self.pay(r)
+        self.attach(r, "receipt")
+        svc.submit_settlement(self.staff, r, spent_amount=D("12500"), cash_returned=D("0"))
+        svc.verify_settlement(self.fin, r)
+        r.refresh_from_db()
+        return r
+
+    def test_claim_is_approved_and_paid_like_any_request(self):
+        adv = self.overspent()
+        claim = adv.reimbursement
+        self.assertTrue(claim.reference.startswith("RMB-"))
+        svc.decide_request(self.md, claim, "approve")
+        self.pay(claim)
+        claim.refresh_from_db()
+        self.assertEqual(claim.status, S.PAID)
+        checks = {c[0]: c[1] for c in svc.closure_checklist(self.c)[0]}
+        self.assertTrue(checks["Staff overspends claimed (reimbursement raised)"])
+
+    def test_only_one_claim_per_advance(self):
+        adv = self.overspent()
+        with self.assertRaises(ValidationError):
+            svc.request_reimbursement(self.fin, adv)
+
+    def test_reimburse_needs_an_advance_and_finance(self):
+        with self.assertRaises(ValidationError):
+            self.req("500", kind="reimburse", supplier=None)
+        adv = self.overspent()
+        with self.assertRaises(PermissionDenied):
+            svc.request_reimbursement(self.staff, adv)
+
+    def test_staff_cannot_pick_reimburse_in_the_form(self):
+        from .forms import PaymentRequestForm
+        choices = [c[0] for c in PaymentRequestForm(campaign=self.c).fields["kind"].choices]
+        self.assertNotIn("reimburse", choices)
+
+
+class ClientPOTests(Base):
+    def test_attach_po_and_it_leads_the_report_appendix(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from . import reports
+        up = SimpleUploadedFile("PO-778.pdf", _tiny_pdf(), content_type="application/pdf")
+        svc.attach_client_po(self.md, self.c, up, po_number="PO-778")
+        self.c.refresh_from_db()
+        self.assertEqual(self.c.client_po_number, "PO-778")
+        self.assertTrue(self.c.client_po_file.name.endswith(".pdf"))
+        pdf = reports.build_campaign_report(self.c)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+
+    def test_po_rejects_unknown_types_and_staff(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        with self.assertRaises(ValidationError):
+            svc.attach_client_po(self.md, self.c, SimpleUploadedFile("x.exe", b"MZ"))
+        with self.assertRaises(PermissionDenied):
+            svc.attach_client_po(self.staff, self.c, SimpleUploadedFile("po.pdf", _tiny_pdf()))
+
+    def test_po_download_view(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        svc.attach_client_po(self.md, self.c, SimpleUploadedFile("po.pdf", _tiny_pdf()))
+        self.client.force_login(self.md)
+        r = self.client.get(f"/campaigns/{self.c.pk}/po/file")
+        self.assertEqual(r.status_code, 200)
+        self.client.force_login(self.staff)
+        self.assertIn(self.client.get(f"/campaigns/{self.c.pk}/po/file").status_code, (403, 404))
+
+
+def _tiny_pdf():
+    import io
+    from reportlab.pdfgen import canvas
+    b = io.BytesIO(); c = canvas.Canvas(b); c.drawString(72, 720, "Client PO 778"); c.save()
+    return b.getvalue()
+
+
+@override_settings(EMAIL_BACKEND="finance.mail_backend.OutboxEmailBackend", EMAIL_PROVIDER="simulated")
+class AccountTests(Base):
+    def test_password_reset_email_goes_through_outbox(self):
+        from .models import OutboundEmail
+        self.staff.email = "staff@example.com"; self.staff.save()
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.post("/password-reset/", {"email": "staff@example.com"})
+        self.assertEqual(r.status_code, 302)
+        e = OutboundEmail.objects.get(event="auth")
+        self.assertIn("/reset/", e.body_text)
+        self.assertEqual(e.to, ["staff@example.com"])
+
+    def test_invite_users_command(self):
+        import os, tempfile
+        from .models import OutboundEmail, StaffProfile
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write("username,first_name,last_name,email,role,supervisor\n"
+                    "nimal,Nimal,P,nimal@example.com,Field Staff,md\n")
+        with self.captureOnCommitCallbacks(execute=True):
+            call_command("invite_users", f.name)
+        os.unlink(f.name)
+        u = User.objects.get(username="nimal")
+        self.assertFalse(u.has_usable_password())
+        self.assertEqual(StaffProfile.objects.get(user=u).supervisor, self.md)
+        self.assertTrue(OutboundEmail.objects.filter(event="user.invite", to=["nimal@example.com"]).exists())
+
+    def test_two_factor_setup_and_login(self):
+        import pyotp
+        self.client.force_login(self.md)
+        self.client.get("/security/setup/")
+        secret = self.client.session["totp_pending"]
+        r = self.client.post("/security/setup/", {"code": "000000"})
+        self.assertEqual(r.status_code, 200)
+        r = self.client.post("/security/setup/", {"code": pyotp.TOTP(secret).now()})
+        self.assertEqual(r.status_code, 302)
+        # a fresh session now has to give a code
+        self.client.logout(); self.client.force_login(self.md)
+        r = self.client.get("/")
+        self.assertTrue(r.url.startswith("/security/verify/"))
+        r = self.client.post("/security/verify/?next=/", {"code": pyotp.TOTP(secret).now()})
+        self.assertEqual(r.url, "/")
+        self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_two_factor_lockout_after_five_wrong_codes(self):
+        from .models import StaffProfile
+        import pyotp
+        StaffProfile.objects.update_or_create(user=self.md, defaults={"totp_secret": pyotp.random_base32(),
+                                                                      "totp_enabled": True})
+        self.client.force_login(self.md)
+        for _ in range(5):
+            r = self.client.post("/security/verify/", {"code": "000000"})
+        self.assertEqual(r.url, "/login/")
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_required_mode_forces_enrolment_for_md_not_staff(self):
+        with self.settings(TWO_FACTOR_REQUIRED=True):
+            self.client.force_login(self.md)
+            self.assertEqual(self.client.get("/").url, "/security/setup/")
+            self.client.force_login(self.staff)
+            self.assertEqual(self.client.get("/").status_code, 200)

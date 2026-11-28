@@ -162,6 +162,19 @@ class Command(BaseCommand):
         svc.submit_settlement(dilini, r, spent_amount=D("142500"), cash_returned=D("7500"), notes="12 promoters × 11,875")
         svc.verify_settlement(fin, r)
 
+        # Staff advance: overspent – verifying it raises a reimbursement claim (RMB-…) for the MD
+        r = svc.submit_request(kasun, campaign=c1, budget_line=L["Food & refreshments"], kind="advance",
+                               amount=D("40000"), purpose="Water & snacks for promoters – day 1")
+        svc.decide_request(md, r, "approve")
+        svc.record_payment(fin, r, amount=D("40000"), paid_on=today - timedelta(days=3), method="cash", reference="PV-1184")
+        Attachment.objects.create(request=r, kind="receipt", uploaded_by=kasun, file=_bill("keells-receipt.png", "Keells Super Wattala", "KW-77310",
+                                                 [("Water 500ml x 300", 27000), ("Biscuit packs x 140", 16800)], today - timedelta(days=3), kind="RECEIPT"))
+        svc.submit_settlement(kasun, r, spent_amount=D("43800"), cash_returned=D("0"), notes="Crowd bigger than planned")
+        svc.verify_settlement(fin, r)
+        svc.attach_client_po(md, c1, _bill("SB-PO-44817.pdf", "Sunleaf Beverages (Pvt) Ltd", "SB-PO-44817",
+                                           [("Mall sampling weekend – agency services", 1920000)],
+                                           today - timedelta(days=20), kind="PURCHASE ORDER"))
+
         # Staff advance: paid, settlement submitted awaiting finance
         r = svc.submit_request(kasun, campaign=c1, budget_line=L["Transport & logistics"], kind="advance",
                                amount=D("60000"), purpose="Lorry hire & fuel – setup day")

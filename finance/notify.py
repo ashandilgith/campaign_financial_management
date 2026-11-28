@@ -128,7 +128,11 @@ def deliver(email_pk: int) -> OutboundEmail:
 
 
 def _send_smtp(email):
-    msg = EmailMultiAlternatives(email.subject, email.body_text, settings.DEFAULT_FROM_EMAIL, email.to, cc=email.cc)
+    from django.core.mail import get_connection
+
+    smtp = get_connection("django.core.mail.backends.smtp.EmailBackend")
+    msg = EmailMultiAlternatives(email.subject, email.body_text, settings.DEFAULT_FROM_EMAIL, email.to, cc=email.cc,
+                                 connection=smtp)
     msg.attach_alternative(email.body_html, "text/html")
     for a in email.attachments.all():
         msg.attach(a.filename, a.file.read(), a.content_type)

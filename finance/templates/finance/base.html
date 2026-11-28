@@ -87,6 +87,7 @@
     <a href="{% url 'campaign_list' %}" class="{% if 'campaign' in u %}on{% endif %}">Campaigns</a>
     <a href="{% url 'request_list' %}" class="{% if u == 'request_list' %}on{% endif %}">Requests</a>
     <a href="{% url 'inbox' %}" class="{% if 'inbox' in u %}on{% endif %}">Inbox</a>
+    <a href="{% url 'security' %}" class="{% if 'security' in u %}on{% endif %}">Security</a>
     <a href="{% url 'ask' %}" class="{% if u == 'ask' %}on{% endif %}">Ask AI</a>
     {% if can_manage %}<a href="{% url 'audit_log' %}" class="{% if u == 'audit_log' %}on{% endif %}">Audit</a>{% endif %}
     {% endwith %}

@@ -32,6 +32,8 @@ class Campaign(models.Model):
     client = models.CharField(max_length=200, blank=True)
     client_po_number = models.CharField("Client PO number", max_length=60, blank=True,
                                         help_text="The client-approved PO that sets this campaign's budget")
+    client_po_file = models.FileField("Client PO document", upload_to="po/%Y/%m/", blank=True,
+                                      help_text="The PO the client approved; it sets the budget")
     client_email = models.EmailField("Client contact email", blank=True,
                                      help_text="Where the closure report is sent")
     commission_pct = models.DecimalField("Agency commission %", max_digits=5, decimal_places=2,
@@ -148,6 +150,9 @@ class PaymentRequest(models.Model):
     class Kind(models.TextChoices):
         ADVANCE = "advance", "Staff advance"
         SUPPLIER = "supplier", "Supplier payment"
+        REIMBURSE = "reimburse", "Staff reimbursement"
+
+    USER_KINDS = [(Kind.ADVANCE.value, Kind.ADVANCE.label), (Kind.SUPPLIER.value, Kind.SUPPLIER.label)]
 
     class Instalment(models.TextChoices):
         SINGLE = "single", "Single payment"
@@ -181,6 +186,10 @@ class PaymentRequest(models.Model):
     needed_by = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.SUBMITTED)
     bill_verified = models.BooleanField(default=False, help_text="Finance has checked the supplier bill/invoice")
+    linked_advance = models.OneToOneField(
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="reimbursement",
+        help_text="For a staff reimbursement: the advance whose verified settlement was overspent",
+    )
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="payment_requests")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -193,7 +202,7 @@ class PaymentRequest(models.Model):
 
     @property
     def reference(self):
-        prefix = "ADV" if self.kind == self.Kind.ADVANCE else "SUP"
+        prefix = {"advance": "ADV", "supplier": "SUP", "reimburse": "RMB"}.get(self.kind, "REQ")
         return f"{prefix}-{self.pk:05d}" if self.pk else prefix
 
     def get_absolute_url(self):
@@ -201,7 +210,7 @@ class PaymentRequest(models.Model):
 
     @property
     def payee(self):
-        if self.kind == self.Kind.ADVANCE:
+        if self.kind in (self.Kind.ADVANCE, self.Kind.REIMBURSE):
             return self.requested_by.get_full_name() or self.requested_by.username
         return str(self.supplier) if self.supplier else "—"
 
@@ -358,6 +367,8 @@ class StaffProfile(models.Model):
         help_text="Cost-centre head / supervisor who endorses requests before they reach the MD. Blank = straight to MD.",
     )
     email_notifications = models.BooleanField(default=True)
+    totp_secret = models.CharField(max_length=64, blank=True, help_text="Two-factor secret (set during enrolment)")
+    totp_enabled = models.BooleanField(default=False)
 
     def __str__(self):
         return f"Profile of {self.user}"
