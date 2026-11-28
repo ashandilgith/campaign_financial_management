@@ -17,16 +17,36 @@
       {% if req.contract %}<dt>Contract</dt><dd>{{ req.contract.description }} ({{ req.contract.total_amount|lkr }}) · {{ req.get_instalment_display }}</dd>{% endif %}
       <dt>Requested by</dt><dd>{{ req.requested_by.get_full_name|default:req.requested_by.username }} · {{ req.created_at|date:"j M Y H:i" }}</dd>
       {% if req.needed_by %}<dt>Needed by</dt><dd>{{ req.needed_by|date:"j M Y" }}</dd>{% endif %}
+      {% if req.linked_advance %}<dt>Reimburses</dt><dd>Overspend on <a href="{% url 'request_detail' req.linked_advance.pk %}">{{ req.linked_advance.reference }}</a></dd>{% endif %}
       {% if req.details %}<dt>Details</dt><dd>{{ req.details|linebreaksbr }}</dd>{% endif %}
       {% if payment %}<dt>Paid</dt><dd><strong>{{ payment.amount|lkr }}</strong> on {{ payment.paid_on|date:"j M Y" }} · {{ payment.get_method_display }} · ref <strong>{{ payment.reference }}</strong> ({{ payment.recorded_by.username }})</dd>{% endif %}
       {% if req.kind == 'supplier' and payment %}<dt>Bill</dt><dd>{% if req.bill_verified %}<span class="badge b-verified">Verified</span>{% else %}<span class="badge b-pending">Not verified</span>{% endif %}</dd>{% endif %}
       {% if settlement %}<dt>Settlement</dt><dd><span class="badge b-{{ settlement.status }}">{{ settlement.get_status_display }}</span>
         spent {{ settlement.spent_amount|lkr }} · returned {{ settlement.cash_returned|lkr }} · balance
         <strong class="{% if settlement.balance|neg %}neg{% endif %}">{{ settlement.balance|lkr }}</strong>
-        {% if settlement.balance|neg %}<span class="small">(reimbursement due to staff)</span>{% endif %}
+        {% if settlement.balance|neg %}{% if reimbursement %}<span class="small">→ claim <a href="{% url 'request_detail' reimbursement.pk %}">{{ reimbursement.reference }}</a> ({{ reimbursement.get_status_display }})</span>{% else %}<span class="small">(reimbursement due to staff)</span>{% if can_raise_reimbursement %} <form method="post" action="{% url 'request_action' req.pk 'raise_reimbursement' %}" style="display:inline">{% csrf_token %}<button class="btn sm ghost">Raise reimbursement claim</button></form>{% endif %}{% endif %}{% endif %}
         {% if settlement.notes %}<br><span class="muted">{{ settlement.notes }}</span>{% endif %}</dd>{% endif %}
     </dl>
   </div>
+
+  {# ---------------- Supervisor endorsement ---------------- #}
+  {% if endorse_form %}
+  <div class="card" style="border-color:#ffb020">
+    <h3>Your endorsement</h3>
+    <p class="small muted">You are {{ req.requested_by.get_full_name|default:req.requested_by.username }}'s supervisor. Endorsed requests go to the MD for final approval.</p>
+    {% if ctx.over_budget %}<div class="alert">This takes {{ req.budget_line.category }} over budget ({{ ctx.available_after|lkr }}).</div>{% endif %}
+    <form method="post">{% csrf_token %}
+      <p><textarea name="comment" rows="2" placeholder="Comment (required to reject / clarify)"></textarea></p>
+      <div class="actions stretch">
+        <button class="btn ok" formaction="{% url 'request_action' req.pk 'endorse' %}">Endorse → MD</button>
+        <button class="btn warn" formaction="{% url 'request_action' req.pk 'sup_clarify' %}">Clarify</button>
+        <button class="btn bad" formaction="{% url 'request_action' req.pk 'sup_reject' %}">Reject</button>
+      </div>
+    </form>
+  </div>
+  {% elif req.status == 'endorse' %}
+  <div class="card small muted">Waiting for {{ supervisor.get_full_name|default:supervisor.username|default:"the supervisor" }} to endorse, then the MD.</div>
+  {% endif %}
 
   {# ---------------- MD decision ---------------- #}
   {% if decision_form %}
@@ -48,7 +68,7 @@
   {% if clarify_form %}
   <div class="card" style="border-color:var(--info)">
     <h3>MD asked for clarification</h3>
-    {% with last=decisions.last %}{% if last %}<p class="small"><strong>{{ last.decided_by.username }}:</strong> {{ last.comment }}</p>{% endif %}{% endwith %}
+    {% with last=decisions.last %}{% if last %}<p class="small"><strong>{{ last.decided_by.username }} ({{ last.get_stage_display }}):</strong> {{ last.comment }}</p>{% endif %}{% endwith %}
     <form method="post" action="{% url 'request_action' req.pk 'respond' %}">{% csrf_token %}
       <p>{{ clarify_form.response.label_tag }}{{ clarify_form.response }}</p>
       <p>{{ clarify_form.new_amount.label_tag }}{{ clarify_form.new_amount }}</p>
@@ -186,4 +206,13 @@
   </div>
 </div>
 </div>
+{% if emails %}
+<div class="card">
+  <h3>Email notifications</h3>
+  <table class="small"><tbody>{% for e in emails %}
+    <tr><td class="muted">{{ e.created_at|date:"j M H:i" }}</td><td><a href="{% url 'inbox_detail' e.pk %}">{{ e.subject }}</a></td>
+      <td class="muted">{{ e.to|join:", "|default:"no address" }}</td><td><span class="badge b-{% if e.status == 'failed' %}rejected{% else %}verified{% endif %}">{{ e.get_status_display }}</span></td></tr>
+  {% endfor %}</tbody></table>
+</div>
+{% endif %}
 {% endblock %}

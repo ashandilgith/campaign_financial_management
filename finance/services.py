@@ -10,6 +10,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from . import notify
 from .models import (
     ApprovalDecision,
     AuditLog,
@@ -19,6 +20,7 @@ from .models import (
     Payment,
     PaymentRequest,
     Settlement,
+    StaffProfile,
     SupplierContract,
 )
 
@@ -70,6 +72,19 @@ def can_see_all(user):
 def require(condition, message="You do not have permission to do that."):
     if not condition:
         raise PermissionDenied(message)
+
+
+def supervisor_of(user):
+    """The person who endorses this user's requests before the MD, or None (straight to MD)."""
+    profile = StaffProfile.objects.filter(user=user).select_related("supervisor").first()
+    sup = profile.supervisor if profile else None
+    if sup is None or not sup.is_active or sup.pk == user.pk or is_md(user):
+        return None
+    return sup
+
+
+def is_supervisor(user):
+    return StaffProfile.objects.filter(supervisor=user).exists()
 
 
 def log(actor, action, message, campaign=None, request=None):
@@ -170,6 +185,8 @@ def line_figures(line, requests=None, contracts=None):
             # Approving the first instalment commits the full quote, so show that exposure.
             f.pending += c.total_amount
 
+    # Overspent advances that already have a reimbursement claim are tracked through that claim instead.
+    claimed = {r.linked_advance_id for r in live if r.kind == PaymentRequest.Kind.REIMBURSE and r.linked_advance_id}
     returned = ZERO
     for r in live:
         if r.status in PaymentRequest.OPEN_STATUSES:
@@ -189,7 +206,7 @@ def line_figures(line, requests=None, contracts=None):
             if s is not None and s.status == Settlement.Status.VERIFIED:
                 returned += s.cash_returned
                 f.verified += s.spent_amount
-                if s.balance < 0:
+                if s.balance < 0 and r.id not in claimed:
                     f.reimbursements_due += -s.balance
             else:
                 f.advances_outstanding += r.paid_amount
@@ -274,12 +291,17 @@ def approval_context(req):
 
 
 @transaction.atomic
-def create_campaign(user, *, code, name, client="", start_date=None, end_date=None, notes="", lines=()):
+def create_campaign(user, *, code, name, client="", start_date=None, end_date=None, notes="", lines=(),
+                    client_po_number="", client_email="", commission_pct=ZERO, client_po_file=None):
     require(can_manage_campaigns(user))
     campaign = Campaign.objects.create(
         code=code, name=name, client=client, start_date=start_date, end_date=end_date,
-        notes=notes, created_by=user,
+        notes=notes, created_by=user, client_po_number=client_po_number, client_email=client_email,
+        commission_pct=commission_pct or ZERO,
     )
+    if client_po_file:
+        campaign.client_po_file = client_po_file
+        campaign.save(update_fields=["client_po_file"])
     for i, (category, amount) in enumerate(lines):
         BudgetLine.objects.create(campaign=campaign, category=category, approved_amount=amount, sort_order=i)
     log(user, "campaign.create", f"Created campaign with budget {fmt(campaign.total_budget)}", campaign=campaign)
@@ -336,6 +358,7 @@ def propose_revision(user, line, new_amount, reason):
         log(user, "budget.revision_proposed",
             f"Proposed {line.category}: {fmt(rev.old_amount)} → {fmt(new_amount)}. Reason: {reason}",
             campaign=campaign)
+        notify.revision_proposed(rev)
     return rev
 
 
@@ -380,8 +403,10 @@ def closure_checklist(campaign):
     pending_revisions = BudgetRevision.objects.filter(
         budget_line__campaign=campaign, status=BudgetRevision.Status.PENDING
     ).count()
+    unclaimed = sum(1 for line, f in rows if f.reimbursements_due > 0)
     checks = [
-        ("No requests awaiting MD decision", total.pending_requests == 0, total.pending_requests),
+        ("No requests awaiting approval", total.pending_requests == 0, total.pending_requests),
+        ("Staff overspends claimed (reimbursement raised)", unclaimed == 0, unclaimed),
         ("No approved requests waiting for payment", total.unpaid_approved == 0, total.unpaid_approved),
         ("All staff advances settled and verified", total.unsettled_advances == 0, total.unsettled_advances),
         ("All supplier bills verified", total.unverified_bills == 0, total.unverified_bills),
@@ -425,7 +450,7 @@ def _validate_contract_amount(contract, amount, exclude_pk=None):
 def submit_request(user, *, campaign, budget_line, kind, amount, purpose, details="",
                    supplier=None, contract=None, new_contract_total=None,
                    new_contract_description="", instalment=PaymentRequest.Instalment.SINGLE,
-                   needed_by=None):
+                   needed_by=None, linked_advance=None):
     if not campaign.accepts_requests:
         raise ValidationError("This campaign is closed to new requests.")
     if budget_line.campaign_id != campaign.id:
@@ -434,9 +459,11 @@ def submit_request(user, *, campaign, budget_line, kind, amount, purpose, detail
         supplier = contract.supplier
     if kind == PaymentRequest.Kind.SUPPLIER and supplier is None:
         raise ValidationError("Choose a supplier for a supplier payment.")
-    if kind == PaymentRequest.Kind.ADVANCE:
+    if kind in (PaymentRequest.Kind.ADVANCE, PaymentRequest.Kind.REIMBURSE):
         supplier = contract = None
         instalment = PaymentRequest.Instalment.SINGLE
+    if kind == PaymentRequest.Kind.REIMBURSE and linked_advance is None:
+        raise ValidationError("A reimbursement is raised from an overspent advance settlement.")
 
     if contract is None and new_contract_total:
         if instalment == PaymentRequest.Instalment.SINGLE:
@@ -459,20 +486,60 @@ def submit_request(user, *, campaign, budget_line, kind, amount, purpose, detail
             raise ValidationError("Pick which instalment this is (first / second / final).")
         _validate_contract_amount(contract, amount)
 
+    supervisor = supervisor_of(user)
     req = PaymentRequest.objects.create(
         campaign=campaign, budget_line=budget_line, kind=kind, supplier=supplier,
         contract=contract, instalment=instalment, amount=amount, purpose=purpose,
-        details=details, needed_by=needed_by, requested_by=user,
+        details=details, needed_by=needed_by, requested_by=user, linked_advance=linked_advance,
+        status=S.ENDORSE if supervisor else S.SUBMITTED,
     )
+    route = f" → supervisor {supervisor.get_full_name() or supervisor.username}" if supervisor else " → MD"
     log(user, "request.submit",
-        f"{req.get_kind_display()} {fmt(amount)} for '{purpose}' ({budget_line.category})", request=req)
+        f"{req.get_kind_display()} {fmt(amount)} for '{purpose}' ({budget_line.category}){route}", request=req)
+    notify.request_needs_approval(req)
     return req
+
+
+@transaction.atomic
+def endorse_request(user, req, decision, comment=""):
+    """First approval layer: the requester's supervisor / cost-centre head endorses before the MD."""
+    require(req.status == S.ENDORSE or (req.status == S.CLARIFY and _clarify_stage(req) == "supervisor"),
+            "This request is not awaiting a supervisor.")
+    require(supervisor_of(req.requested_by) == user or is_admin(user),
+            "Only the requester's supervisor can endorse this request.")
+    require(req.requested_by_id != user.id, "You cannot endorse your own request.")
+    D = ApprovalDecision.Decision
+    if decision not in (D.ENDORSE, D.REJECT, D.CLARIFY):
+        raise ValidationError("Unknown decision.")
+    if decision in (D.REJECT, D.CLARIFY) and not comment.strip():
+        raise ValidationError("Please add a comment explaining the rejection or what needs clarifying.")
+    ctx = approval_context(req)
+    snapshot = ctx["figures"].as_dict()
+    snapshot.update(available_before=str(ctx["available_before"]), available_after=str(ctx["available_after"]),
+                    request_amount=str(req.amount))
+    ApprovalDecision.objects.create(request=req, stage=ApprovalDecision.Stage.SUPERVISOR, decision=decision,
+                                    comment=comment, snapshot=snapshot, decided_by=user)
+    req.status = {D.ENDORSE: S.SUBMITTED, D.REJECT: S.REJECTED, D.CLARIFY: S.CLARIFY}[decision]
+    req.save(update_fields=["status", "updated_at"])
+    log(user, f"request.supervisor_{decision}",
+        f"Supervisor {dict(D.choices)[decision].lower()} {fmt(req.amount)}. {comment}".strip(), request=req)
+    if decision == D.ENDORSE:
+        notify.request_needs_approval(req, endorsed_by=user)
+    else:
+        notify.request_decided(req, decision, user, comment, stage="supervisor")
+
+
+def _clarify_stage(req):
+    last = req.decisions.filter(decision=ApprovalDecision.Decision.CLARIFY).order_by("-decided_at", "-pk").first()
+    return last.stage if last else ApprovalDecision.Stage.MD
 
 
 @transaction.atomic
 def decide_request(user, req, decision, comment=""):
     require(is_md(user), "Only the MD can approve payment requests.")
     require(req.requested_by_id != user.id, "You cannot approve your own request.")
+    if req.status == S.ENDORSE or (req.status == S.CLARIFY and _clarify_stage(req) == "supervisor"):
+        raise ValidationError("This request is still with the requester's supervisor.")
     if req.status not in PaymentRequest.OPEN_STATUSES:
         raise ValidationError("This request is not awaiting a decision.")
     ctx = approval_context(req)
@@ -495,6 +562,7 @@ def decide_request(user, req, decision, comment=""):
     req.save(update_fields=["status", "updated_at"])
     label = dict(D.choices)[decision]
     log(user, f"request.{decision}", f"{label} {fmt(req.amount)}. {comment}".strip(), request=req)
+    notify.request_decided(req, decision, user, comment)
 
 
 @transaction.atomic
@@ -504,21 +572,24 @@ def respond_to_clarification(user, req, response, new_amount=None):
         raise ValidationError("No clarification has been requested.")
     if not response.strip():
         raise ValidationError("Please write a response for the MD.")
+    last = req.decisions.filter(decision=ApprovalDecision.Decision.CLARIFY).order_by("-decided_at", "-pk").first()
     msg = f"Clarification: {response}"
     if new_amount is not None and new_amount != req.amount:
         if req.contract_id:
             _validate_contract_amount(req.contract, new_amount, exclude_pk=req.pk)
         msg += f" Amount changed {fmt(req.amount)} → {fmt(new_amount)}."
         req.amount = new_amount
-    req.status = S.SUBMITTED
+    back_to_supervisor = last is not None and last.stage == ApprovalDecision.Stage.SUPERVISOR
+    req.status = S.ENDORSE if back_to_supervisor else S.SUBMITTED
     req.save()
     log(user, "request.clarified", msg, request=req)
+    notify.clarification_answered(req, last.decided_by if last else None)
 
 
 @transaction.atomic
 def cancel_request(user, req, reason=""):
     require(req.requested_by_id == user.id or is_finance(user) or is_admin(user))
-    if req.status not in (S.SUBMITTED, S.CLARIFY, S.APPROVED):
+    if req.status not in (S.ENDORSE, S.SUBMITTED, S.CLARIFY, S.APPROVED):
         raise ValidationError("Only unpaid requests can be cancelled.")
     req.status = S.CANCELLED
     req.save(update_fields=["status", "updated_at"])
@@ -544,6 +615,7 @@ def record_payment(user, req, *, amount, paid_on, method, reference):
     note = "" if amount == req.amount else f" (approved {fmt(req.amount)}; balance released)"
     log(user, "payment.record",
         f"Paid {fmt(amount)} by {dict(Payment.Method.choices)[method]}, ref {reference}{note}", request=req)
+    notify.payment_recorded(req)
 
 
 @transaction.atomic
@@ -583,6 +655,7 @@ def submit_settlement(user, req, *, spent_amount, cash_returned, notes=""):
     log(user, "settlement.submit",
         f"Settlement: spent {fmt(spent_amount)}, returned {fmt(cash_returned)}, balance {fmt(s.balance)}",
         request=req)
+    notify.settlement_submitted(req)
     return s
 
 
@@ -605,12 +678,39 @@ def verify_settlement(user, req, approve=True, comment=""):
         elif s.balance < 0:
             extra = f" Reimbursement due to staff: {fmt(-s.balance)}."
         log(user, "settlement.verify", f"Settlement verified.{extra} {comment}".strip(), request=req)
+        notify.settlement_checked(req, True, comment)
+        if s.balance < 0:
+            request_reimbursement(user, req)
     else:
         if not comment.strip():
             raise ValidationError("Explain what needs correcting.")
         s.status = Settlement.Status.RETURNED
         s.save()
         log(user, "settlement.return", f"Settlement returned for correction: {comment}", request=req)
+        notify.settlement_checked(req, False, comment)
+
+
+def request_reimbursement(user, advance):
+    """Raise the staff member's claim for an advance overspend as its own request.
+
+    It goes through the same supervisor / MD approval and budget check as any payment, and an
+    advance can have only one claim, so the same overspend can never be paid twice.
+    """
+    require(is_finance(user), "Only finance raises reimbursement claims.")
+    s = getattr(advance, "settlement", None)
+    if s is None or s.status != Settlement.Status.VERIFIED or s.balance >= 0:
+        raise ValidationError("Only a verified, overspent advance settlement can be reimbursed.")
+    if PaymentRequest.objects.filter(linked_advance=advance).exists():
+        raise ValidationError("A reimbursement has already been raised for this advance.")
+    req = submit_request(
+        advance.requested_by, campaign=advance.campaign, budget_line=advance.budget_line,
+        kind=PaymentRequest.Kind.REIMBURSE, amount=-s.balance, linked_advance=advance,
+        purpose=f"Reimbursement of overspend on {advance.reference}",
+        details=f"Advance {fmt(advance.paid_amount)}; verified spend {fmt(s.spent_amount)}; "
+                f"cash returned {fmt(s.cash_returned)}.",
+    )
+    log(user, "reimbursement.raise", f"Raised {req.reference} for {fmt(req.amount)} overspend", request=advance)
+    return req
 
 
 def record_attachment(user, req, attachment):
@@ -770,3 +870,67 @@ def run_ai_read(user, attachment):
     else:
         log(user, "ai.error", f"AI could not read {attachment.filename}", request=attachment.request)
     return attachment
+
+
+PO_TYPES = (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".docx", ".xlsx", ".msg", ".eml")
+
+
+@transaction.atomic
+def attach_client_po(user, campaign, upload, po_number=""):
+    """Attach (or replace) the client-approved PO that the campaign budget is based on."""
+    require(can_manage_campaigns(user), "Only finance, the MD or an admin can attach the client PO.")
+    if upload is None:
+        raise ValidationError("Choose the PO file.")
+    if not upload.name.lower().endswith(PO_TYPES):
+        raise ValidationError("Upload the PO as a PDF, photo, Word/Excel file or saved email.")
+    replaced = bool(campaign.client_po_file)
+    campaign.client_po_file = upload
+    if po_number.strip():
+        campaign.client_po_number = po_number.strip()
+    campaign.save(update_fields=["client_po_file", "client_po_number"])
+    log(user, "campaign.po", f"{'Replaced' if replaced else 'Attached'} client PO {campaign.client_po_number}".strip()
+        + f" ({upload.name})", campaign=campaign)
+
+
+# --------------------------------------------------------------------------- user accounts
+
+
+def invite_user(actor, user):
+    """Email a one-time link (valid 3 days) for the person to set their own password."""
+    from django.contrib.auth.tokens import default_token_generator
+    from django.utils.encoding import force_bytes
+    from django.utils.http import urlsafe_base64_encode
+
+    require(actor is None or is_admin(actor) or actor.is_superuser, "Only an admin can invite users.")
+    if not user.email:
+        raise ValidationError(f"{user.username} has no email address.")
+    if user.has_usable_password() and user.last_login:
+        raise ValidationError(f"{user.username} has already signed in; use password reset instead.")
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    link = notify.absolute(f"/reset/{uid}/{default_token_generator.make_token(user)}/")
+    notify.send("user.invite", users=[user], subject="Your Campaign Finance account",
+                heading=f"Welcome, {user.get_full_name() or user.username}",
+                intro="An account has been created for you. Set your password to sign in. The link works once and "
+                      "expires in 3 days.",
+                rows=[("Username", user.username), ("Roles", ", ".join(sorted(roles_of(user))) or "—")],
+                button=("Set your password", link))
+    if actor:
+        log(actor, "user.invite", f"Invitation sent to {user.username} <{user.email}>")
+
+
+# --------------------------------------------------------------------------- reports & email
+
+
+def send_campaign_report(user, campaign, to_address, message=""):
+    """Build the closure report PDF and email it to the client (or simulate that)."""
+    from django.core.validators import validate_email
+
+    from .reports import build_campaign_report
+
+    require(can_see_all(user), "Only finance, the MD or an admin can send reports.")
+    to_address = (to_address or "").strip()
+    validate_email(to_address)
+    pdf = build_campaign_report(campaign, prepared_by=user)
+    email = notify.campaign_report(campaign, user, to_address, pdf, message)
+    log(user, "report.email", f"Closure report emailed to {to_address} ({len(pdf) // 1024} KB)", campaign=campaign)
+    return email

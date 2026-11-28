@@ -1,0 +1,4 @@
+{% extends "finance/base.html" %}{% block title %}Two-factor code{% endblock %}{% block content %}
+<div class="card" style="max-width:380px;margin:3rem auto"><h1>Enter your code</h1><p class="small muted">Open your authenticator app and enter the 6-digit code for Campaign Finance.</p>
+<form method="post">{% csrf_token %}<p><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required></p><button class="btn" style="width:100%">Continue</button></form>
+<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="btn ghost sm" style="margin-top:.6rem">Sign out</button></form></div>{% endblock %}

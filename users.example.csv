@@ -1,0 +1,5 @@
+username,first_name,last_name,email,role,supervisor
+vinoth,Vinoth,,vinoth@example.lk,MD,
+accounts,Accounts,Team,accounts@example.lk,Finance,
+tharindu,Tharindu,,tharindu@example.lk,Field Staff,
+nimal,Nimal,,nimal@example.lk,Field Staff,tharindu

@@ -130,3 +130,15 @@ available = budget − cash_out − committed − pending
 AI design: the model only *reads* documents into a strict JSON schema. All judgements ("does the bill match the payment?") are plain Python rules, so they're explainable and auditable, and the AI can't move money. When no API key is set, the feature switches off cleanly.
 
 Environment variables: `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` with `AI_PROVIDER=anthropic`), `AI_MODEL`, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DATABASE_URL`, `MEDIA_ROOT`.
+
+
+## Release 2 (Nov 2026): supervisor layer, email, client PDF
+
+Changes after the 25 Nov review with Arun:
+
+- **Approval routing.** `StaffProfile.supervisor` adds a first approver. `submit_request` puts the request in `endorse` ("Awaiting supervisor") when the requester has one; `endorse_request` moves it to `submitted` (the MD's queue), or to `clarify` / `rejected`. Each `ApprovalDecision` records its `stage` (supervisor or MD), and a clarification returns to whichever stage asked. Requests awaiting a supervisor count as *pending* in the budget, so availability stays right.
+- **Notifications** (`finance/notify.py`). Every notifiable event writes an `OutboundEmail` row, then delivers it after the transaction commits. Providers: `simulated` (the Inbox page), `outlook` (Graph client-credentials token + `/users/{sender}/sendMail`, no SDK) and `smtp`. Delivery errors are stored on the row and never roll back the business action.
+- **Client closure report** (`finance/reports.py`). Built from `campaign_position`, the same numbers as the screens. Images are placed on the page; PDF bills are merged after their cover page with pypdf. Campaigns gained `client_po_number`, `client_email` and `commission_pct`.
+- **Local AI option.** `AI_PROVIDER=local` sends document reading and Ask AI to an OpenAI-compatible server (llama.cpp, Ollama, vLLM), for clients who want everything on their own hardware.
+
+Next: read the client's approved PO from the Outlook inbox to pre-fill the campaign budget (Graph `Mail.Read` on one mailbox), and WhatsApp alerts.

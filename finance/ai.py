@@ -95,7 +95,7 @@ class AIError(Exception):
     pass
 
 
-DEFAULT_MODELS = {"openai": "gpt-6-luna", "anthropic": "claude-haiku-5-5"}
+DEFAULT_MODELS = {"openai": "gpt-6-luna", "anthropic": "claude-haiku-5-5", "local": "local-model"}
 
 
 def provider():
@@ -103,6 +103,8 @@ def provider():
 
 
 def _api_key():
+    if provider() == "local":
+        return settings.AI_BASE_URL  # a llama.cpp / Ollama / vLLM server needs a URL, not a key
     return settings.OPENAI_API_KEY if provider() == "openai" else settings.ANTHROPIC_API_KEY
 
 
@@ -183,10 +185,56 @@ def _call_openai(block, context):
         raise AIError("The model did not return valid document details.")
 
 
+def _local_parts(block):
+    """Chat Completions content parts for an OpenAI-compatible local server (llama.cpp, Ollama, vLLM).
+
+    Local vision models take images, not PDFs, so a PDF is sent as its extracted text.
+    """
+    if block["type"] == "image":
+        src = block["source"]
+        return [{"type": "image_url", "image_url": {"url": f"data:{src['media_type']};base64,{src['data']}"}}]
+    if block["type"] == "document":
+        from pypdf import PdfReader
+
+        raw = base64.standard_b64decode(block["source"]["data"])
+        text = "\n".join((page.extract_text() or "") for page in PdfReader(io.BytesIO(raw)).pages[:5]).strip()
+        if not text:
+            raise AIError("This PDF is a scan with no text layer; upload a photo of it for the local model.")
+        return [{"type": "text", "text": f"<document>\n{text[:20000]}\n</document>"}]
+    return [{"type": "text", "text": block["text"]}]
+
+
+def _call_local(block, context):
+    import json
+
+    from openai import OpenAI
+
+    client = OpenAI(base_url=settings.AI_BASE_URL, api_key=settings.AI_LOCAL_API_KEY or "not-needed",
+                    timeout=180, max_retries=1)
+    resp = client.chat.completions.create(
+        model=model_name(),
+        temperature=0,
+        messages=[{"role": "user", "content": _local_parts(block) + [
+            {"type": "text", "text": PROMPT.format(tool="JSON output", context=context)
+             + "\nReply with one JSON object only."}]}],
+        response_format={"type": "json_schema",
+                         "json_schema": {"name": TOOL_NAME, "strict": True, "schema": _strict(DOCUMENT_SCHEMA)}},
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`").removeprefix("json").strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        raise AIError("The local model did not return valid document details.")
+
+
 def call_model(block, context):
     """Send one document to the configured provider and return structured fields. Patched in tests."""
     if provider() == "openai":
         return _call_openai(block, context)
+    if provider() == "local":
+        return _call_local(block, context)
     return _call_anthropic(block, context)
 
 

@@ -6,10 +6,18 @@
   <div class="actions">
     {% if campaign.accepts_requests %}<a class="btn" href="{% url 'request_new' campaign.pk %}">+ Request</a>{% endif %}
     <a class="btn ghost" href="{% url 'campaign_report' campaign.pk %}">Report</a>
+    <a class="btn ghost" href="{% url 'campaign_report_pdf' campaign.pk %}">PDF</a>
     <a class="btn ghost" href="{% url 'campaign_export' campaign.pk %}">CSV</a>
   </div>
 </div>
-<p class="muted small">{{ campaign.client }}{% if campaign.start_date %} · {{ campaign.start_date|date:"j M" }} – {{ campaign.end_date|date:"j M Y" }}{% endif %}</p>
+<div class="card small">
+  <strong>Client PO:</strong> {% if campaign.client_po_file %}<a href="{% url 'campaign_po_download' campaign.pk %}">{{ campaign.client_po_number|default:"view PO" }}</a> <span class="muted">(the approved PO sets this budget)</span>{% else %}<span class="neg">not attached yet</span>{% endif %}
+  {% if can_manage %}<form method="post" enctype="multipart/form-data" action="{% url 'campaign_po_upload' campaign.pk %}" class="actions" style="margin-top:.4rem">{% csrf_token %}
+    <input type="text" name="po_number" value="{{ campaign.client_po_number }}" placeholder="PO number" style="max-width:180px">
+    <input type="file" name="po" accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,.msg,.eml" style="flex:1">
+    <button class="btn sm">{% if campaign.client_po_file %}Replace PO{% else %}Attach PO{% endif %}</button></form>{% endif %}
+</div>
+<p class="muted small">{{ campaign.client }}{% if campaign.client_po_number %} · PO {{ campaign.client_po_number }}{% endif %}{% if campaign.start_date %} · {{ campaign.start_date|date:"j M" }} – {{ campaign.end_date|date:"j M Y" }}{% endif %}</p>
 
 <div class="grid" style="margin-bottom:1rem">
   <div class="stat big"><div class="k">Budget</div><div class="v">{{ total.budget|num }}</div></div>

@@ -389,6 +389,11 @@ def build_graph(llm, tools):
 def default_llm():
     from langchain_openai import ChatOpenAI
 
+    if settings.AI_PROVIDER == "local":
+        # llama.cpp / Ollama / vLLM: OpenAI-compatible Chat Completions with tool calling.
+        return ChatOpenAI(model=settings.AGENT_MODEL or settings.AI_MODEL or "local-model",
+                          base_url=settings.AI_BASE_URL, api_key=settings.AI_LOCAL_API_KEY or "not-needed",
+                          temperature=0, timeout=180, max_retries=1)
     effort = settings.AGENT_REASONING_EFFORT
     if not settings.AGENT_USE_RESPONSES_API and effort != "none":
         # Live eval (Nov 2026): /v1/chat/completions rejects function tools + reasoning_effort for
@@ -405,6 +410,8 @@ def default_llm():
 
 
 def enabled():
+    if settings.AI_PROVIDER == "local":
+        return bool(settings.AI_BASE_URL)
     return bool(settings.OPENAI_API_KEY)
 
 

@@ -30,6 +30,15 @@ class Campaign(models.Model):
     code = models.CharField(max_length=30, unique=True)
     name = models.CharField(max_length=200)
     client = models.CharField(max_length=200, blank=True)
+    client_po_number = models.CharField("Client PO number", max_length=60, blank=True,
+                                        help_text="The client-approved PO that sets this campaign's budget")
+    client_po_file = models.FileField("Client PO document", upload_to="po/%Y/%m/", blank=True,
+                                      help_text="The PO the client approved; it sets the budget")
+    client_email = models.EmailField("Client contact email", blank=True,
+                                     help_text="Where the closure report is sent")
+    commission_pct = models.DecimalField("Agency commission %", max_digits=5, decimal_places=2,
+                                         default=Decimal("0"), validators=NON_NEGATIVE,
+                                         help_text="Added to verified spend on the closure invoice summary")
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
@@ -141,6 +150,9 @@ class PaymentRequest(models.Model):
     class Kind(models.TextChoices):
         ADVANCE = "advance", "Staff advance"
         SUPPLIER = "supplier", "Supplier payment"
+        REIMBURSE = "reimburse", "Staff reimbursement"
+
+    USER_KINDS = [(Kind.ADVANCE.value, Kind.ADVANCE.label), (Kind.SUPPLIER.value, Kind.SUPPLIER.label)]
 
     class Instalment(models.TextChoices):
         SINGLE = "single", "Single payment"
@@ -149,6 +161,7 @@ class PaymentRequest(models.Model):
         FINAL = "final", "Final instalment"
 
     class Status(models.TextChoices):
+        ENDORSE = "endorse", "Awaiting supervisor"
         SUBMITTED = "submitted", "Awaiting MD"
         CLARIFY = "clarify", "Clarification requested"
         APPROVED = "approved", "Approved – to pay"
@@ -157,7 +170,7 @@ class PaymentRequest(models.Model):
         SETTLED = "settled", "Settled"
         CANCELLED = "cancelled", "Cancelled"
 
-    OPEN_STATUSES = (Status.SUBMITTED, Status.CLARIFY)
+    OPEN_STATUSES = (Status.ENDORSE, Status.SUBMITTED, Status.CLARIFY)
 
     campaign = models.ForeignKey(Campaign, on_delete=models.PROTECT, related_name="requests")
     budget_line = models.ForeignKey(BudgetLine, on_delete=models.PROTECT, related_name="requests")
@@ -173,6 +186,10 @@ class PaymentRequest(models.Model):
     needed_by = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.SUBMITTED)
     bill_verified = models.BooleanField(default=False, help_text="Finance has checked the supplier bill/invoice")
+    linked_advance = models.OneToOneField(
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="reimbursement",
+        help_text="For a staff reimbursement: the advance whose verified settlement was overspent",
+    )
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="payment_requests")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -185,7 +202,7 @@ class PaymentRequest(models.Model):
 
     @property
     def reference(self):
-        prefix = "ADV" if self.kind == self.Kind.ADVANCE else "SUP"
+        prefix = {"advance": "ADV", "supplier": "SUP", "reimburse": "RMB"}.get(self.kind, "REQ")
         return f"{prefix}-{self.pk:05d}" if self.pk else prefix
 
     def get_absolute_url(self):
@@ -193,7 +210,7 @@ class PaymentRequest(models.Model):
 
     @property
     def payee(self):
-        if self.kind == self.Kind.ADVANCE:
+        if self.kind in (self.Kind.ADVANCE, self.Kind.REIMBURSE):
             return self.requested_by.get_full_name() or self.requested_by.username
         return str(self.supplier) if self.supplier else "—"
 
@@ -204,14 +221,20 @@ class PaymentRequest(models.Model):
 
 
 class ApprovalDecision(models.Model):
-    """An MD decision. ``snapshot`` stores the budget figures the MD saw when deciding."""
+    """A supervisor or MD decision. ``snapshot`` stores the budget figures the approver saw."""
+
+    class Stage(models.TextChoices):
+        SUPERVISOR = "supervisor", "Supervisor"
+        MD = "md", "MD"
 
     class Decision(models.TextChoices):
+        ENDORSE = "endorse", "Endorsed"
         APPROVE = "approve", "Approved"
         REJECT = "reject", "Rejected"
         CLARIFY = "clarify", "Clarification requested"
 
     request = models.ForeignKey(PaymentRequest, on_delete=models.CASCADE, related_name="decisions")
+    stage = models.CharField(max_length=10, choices=Stage.choices, default=Stage.MD)
     decision = models.CharField(max_length=10, choices=Decision.choices)
     comment = models.TextField(blank=True)
     snapshot = models.JSONField(default=dict, blank=True)
@@ -333,3 +356,68 @@ class StoredFile(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class StaffProfile(models.Model):
+    """Per-user settings: the supervisor who endorses this person's requests before the MD."""
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
+    supervisor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="team",
+        help_text="Cost-centre head / supervisor who endorses requests before they reach the MD. Blank = straight to MD.",
+    )
+    email_notifications = models.BooleanField(default=True)
+    totp_secret = models.CharField(max_length=64, blank=True, help_text="Two-factor secret (set during enrolment)")
+    totp_enabled = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"Profile of {self.user}"
+
+
+def email_attachment_path(instance, filename):
+    return f"outbox/{instance.email_id}/{filename}"
+
+
+class OutboundEmail(models.Model):
+    """Every notification and report the system sends (or, in simulated mode, would send).
+
+    In ``EMAIL_PROVIDER=simulated`` mode nothing leaves the server and this table is the
+    demo "inbox". With ``outlook`` the message is sent through Microsoft Graph and the
+    row records the outcome, so there is always an audit trail of what was emailed.
+    """
+
+    class Status(models.TextChoices):
+        SIMULATED = "simulated", "Simulated (not sent)"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped (no address)"
+
+    event = models.CharField(max_length=40)
+    to = models.JSONField(default=list)
+    cc = models.JSONField(default=list, blank=True)
+    recipients = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="emails_received")
+    subject = models.CharField(max_length=255)
+    body_text = models.TextField()
+    body_html = models.TextField(blank=True)
+    provider = models.CharField(max_length=20)
+    status = models.CharField(max_length=10, choices=Status.choices)
+    error = models.TextField(blank=True)
+    provider_message_id = models.CharField(max_length=255, blank=True)
+    request = models.ForeignKey(PaymentRequest, on_delete=models.SET_NULL, null=True, blank=True, related_name="emails")
+    campaign = models.ForeignKey(Campaign, on_delete=models.SET_NULL, null=True, blank=True, related_name="emails")
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    def __str__(self):
+        return f"{self.subject} → {', '.join(self.to)}"
+
+
+class EmailAttachment(models.Model):
+    email = models.ForeignKey(OutboundEmail, on_delete=models.CASCADE, related_name="attachments")
+    file = models.FileField(upload_to=email_attachment_path)
+    filename = models.CharField(max_length=200)
+    content_type = models.CharField(max_length=100, default="application/pdf")
+    size = models.PositiveIntegerField(default=0)

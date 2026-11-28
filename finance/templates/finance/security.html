@@ -1,0 +1,8 @@
+{% extends "finance/base.html" %}{% block title %}Security{% endblock %}{% block content %}
+<h1>Account security</h1>
+<div class="card"><h3>Password</h3><a class="btn ghost" href="{% url 'password_change' %}">Change password</a></div>
+<div class="card"><h3>Two-factor sign-in</h3>
+{% if profile.totp_enabled %}<p><span class="badge b-verified">On</span> You enter a 6-digit code from your authenticator app after your password.</p>
+{% if not required %}<form method="post" action="{% url 'security_disable' %}" class="actions">{% csrf_token %}<input type="text" name="code" placeholder="Current code" inputmode="numeric" style="max-width:160px"><button class="btn bad sm">Turn off</button></form>{% else %}<p class="small muted">Required for your role.</p>{% endif %}
+{% else %}<p>Off. {% if required %}Required for your role.{% endif %} Use Google or Microsoft Authenticator on your phone.</p><a class="btn" href="{% url 'security_setup' %}">Turn on</a>{% endif %}
+<p class="small muted">Lost your phone? Ask an admin to reset two-factor for your account.</p></div>{% endblock %}

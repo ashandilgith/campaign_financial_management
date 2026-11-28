@@ -21,6 +21,11 @@ class Command(BaseCommand):
             u = User.objects.create_superuser(username=username, password=password)
             u.groups.add(Group.objects.get(name=svc.ROLE_ADMIN))
             self.stdout.write(f"Created admin user '{username}'.")
-        if os.environ.get("SEED_DEMO") == "1" and not Campaign.objects.exists():
-            call_command("seed_demo")
+        if os.environ.get("SEED_DEMO") == "1":
+            if not Campaign.objects.exists():
+                call_command("seed_demo")
+            elif Campaign.objects.filter(code="CMP-2611").exists() and not User.objects.filter(username="tharindu").exists():
+                # Demo database from before the supervisor / email / PDF release: reload the demo story.
+                self.stdout.write("Upgrading demo data (supervisor layer, emails, closure report).")
+                call_command("seed_demo", reset=True)
         self.stdout.write("Bootstrap complete.")

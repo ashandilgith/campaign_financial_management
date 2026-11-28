@@ -27,7 +27,7 @@ class CampaignForm(forms.ModelForm):
 
     class Meta:
         model = Campaign
-        fields = ["code", "name", "client", "start_date", "end_date", "status", "notes"]
+        fields = ["code", "name", "client", "client_po_number", "client_po_file", "client_email", "commission_pct", "start_date", "end_date", "status", "notes"]
         widgets = {"start_date": DateInput(), "end_date": DateInput(), "notes": forms.Textarea(attrs={"rows": 2})}
 
     def clean_budget_lines(self):
@@ -68,7 +68,7 @@ class RevisionForm(forms.Form):
 
 
 class PaymentRequestForm(forms.Form):
-    kind = forms.ChoiceField(choices=PaymentRequest.Kind.choices, widget=forms.RadioSelect,
+    kind = forms.ChoiceField(choices=PaymentRequest.USER_KINDS, widget=forms.RadioSelect,
                              initial=PaymentRequest.Kind.ADVANCE, label="Request type")
     budget_line = forms.ModelChoiceField(queryset=BudgetLine.objects.none(), label="Budget category")
     purpose = forms.CharField(max_length=255, label="What is it for?")

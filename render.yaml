@@ -41,6 +41,18 @@ services:
         sync: false
       - key: SEED_DEMO          # "1" loads demo campaigns into an empty database; set "0" for live use
         value: "1"
+      - key: EMAIL_PROVIDER     # simulated | outlook | smtp
+        value: simulated
+      - key: REPORT_AGENCY_NAME
+        value: "Your Agency (Pvt) Ltd"
+      - key: MS_GRAPH_TENANT_ID
+        sync: false
+      - key: MS_GRAPH_CLIENT_ID
+        sync: false
+      - key: MS_GRAPH_CLIENT_SECRET
+        sync: false
+      - key: MS_GRAPH_SENDER
+        sync: false
 
 databases:
   - name: campaign-finance-db
